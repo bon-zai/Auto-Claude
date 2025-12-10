@@ -13,6 +13,7 @@ from claude_code_sdk import ClaudeCodeOptions, ClaudeSDKClient
 from claude_code_sdk.types import HookMatcher
 
 from security import bash_security_hook
+from linear_integration import is_linear_enabled
 
 
 # Puppeteer MCP tools for browser automation
@@ -25,6 +26,26 @@ PUPPETEER_TOOLS = [
     "mcp__puppeteer__puppeteer_select",
     "mcp__puppeteer__puppeteer_hover",
     "mcp__puppeteer__puppeteer_evaluate",
+]
+
+# Linear MCP tools for project management (when LINEAR_API_KEY is set)
+LINEAR_TOOLS = [
+    "mcp__linear-server__list_teams",
+    "mcp__linear-server__get_team",
+    "mcp__linear-server__list_projects",
+    "mcp__linear-server__get_project",
+    "mcp__linear-server__create_project",
+    "mcp__linear-server__update_project",
+    "mcp__linear-server__list_issues",
+    "mcp__linear-server__get_issue",
+    "mcp__linear-server__create_issue",
+    "mcp__linear-server__update_issue",
+    "mcp__linear-server__list_comments",
+    "mcp__linear-server__create_comment",
+    "mcp__linear-server__list_issue_statuses",
+    "mcp__linear-server__list_issue_labels",
+    "mcp__linear-server__list_users",
+    "mcp__linear-server__get_user",
 ]
 
 # Built-in tools
@@ -63,6 +84,15 @@ def create_client(project_dir: Path, spec_dir: Path, model: str) -> ClaudeSDKCli
             "Get your token by running: claude setup-token"
         )
 
+    # Check if Linear integration is enabled
+    linear_enabled = is_linear_enabled()
+    linear_api_key = os.environ.get("LINEAR_API_KEY", "")
+
+    # Build the list of allowed tools
+    allowed_tools_list = [*BUILTIN_TOOLS, *PUPPETEER_TOOLS]
+    if linear_enabled:
+        allowed_tools_list.extend(LINEAR_TOOLS)
+
     # Create comprehensive security settings
     # Note: Using relative paths ("./**") restricts access to project directory
     # since cwd is set to project_dir
@@ -82,6 +112,8 @@ def create_client(project_dir: Path, spec_dir: Path, model: str) -> ClaudeSDKCli
                 "Bash(*)",
                 # Allow Puppeteer MCP tools for browser automation
                 *PUPPETEER_TOOLS,
+                # Allow Linear MCP tools for project management (if enabled)
+                *(LINEAR_TOOLS if linear_enabled else []),
             ],
         },
     }
@@ -95,8 +127,25 @@ def create_client(project_dir: Path, spec_dir: Path, model: str) -> ClaudeSDKCli
     print("   - Sandbox enabled (OS-level bash isolation)")
     print(f"   - Filesystem restricted to: {project_dir.resolve()}")
     print("   - Bash commands restricted to allowlist")
-    print("   - MCP servers: puppeteer (browser automation)")
+
+    mcp_servers_list = ["puppeteer (browser automation)"]
+    if linear_enabled:
+        mcp_servers_list.append("linear (project management)")
+    print(f"   - MCP servers: {', '.join(mcp_servers_list)}")
     print()
+
+    # Configure MCP servers
+    mcp_servers = {
+        "puppeteer": {"command": "npx", "args": ["puppeteer-mcp-server"]}
+    }
+
+    # Add Linear MCP server if enabled
+    if linear_enabled:
+        mcp_servers["linear"] = {
+            "type": "http",
+            "url": "https://mcp.linear.app/mcp",
+            "headers": {"Authorization": f"Bearer {linear_api_key}"}
+        }
 
     return ClaudeSDKClient(
         options=ClaudeCodeOptions(
@@ -107,13 +156,8 @@ def create_client(project_dir: Path, spec_dir: Path, model: str) -> ClaudeSDKCli
                 "your work through thorough testing. You communicate progress through Git commits "
                 "and build-progress.txt updates."
             ),
-            allowed_tools=[
-                *BUILTIN_TOOLS,
-                *PUPPETEER_TOOLS,
-            ],
-            mcp_servers={
-                "puppeteer": {"command": "npx", "args": ["puppeteer-mcp-server"]}
-            },
+            allowed_tools=allowed_tools_list,
+            mcp_servers=mcp_servers,
             hooks={
                 "PreToolUse": [
                     HookMatcher(matcher="Bash", hooks=[bash_security_hook]),

@@ -4,12 +4,23 @@ Auto-Build Framework
 ====================
 
 A multi-session autonomous coding framework for building features and applications.
+Uses chunk-based implementation plans with phase dependencies.
+
+Key Features:
+- Safe workspace isolation (builds in separate workspace by default)
+- Parallel execution with Git worktrees
+- Smart recovery from interruptions
+- Linear integration for project management
 
 Usage:
     python auto-build/run.py --spec 001-initial-app
     python auto-build/run.py --spec 001
     python auto-build/run.py --list
-    python auto-build/run.py --spec 002 --max-iterations 5
+
+    # Workspace management
+    python auto-build/run.py --spec 001 --merge     # Add completed build to project
+    python auto-build/run.py --spec 001 --review    # See what was built
+    python auto-build/run.py --spec 001 --discard   # Delete build (requires confirmation)
 
 Prerequisites:
     - CLAUDE_CODE_OAUTH_TOKEN environment variable set (run: claude setup-token)
@@ -35,7 +46,29 @@ if env_file.exists():
     load_dotenv(env_file)
 
 from agent import run_autonomous_agent
-from progress import count_passing_tests
+from coordinator import SwarmCoordinator
+from progress import count_chunks
+from linear_integration import is_linear_enabled, LinearManager
+from workspace import (
+    WorkspaceMode,
+    WorkspaceChoice,
+    choose_workspace,
+    setup_workspace,
+    finalize_workspace,
+    handle_workspace_choice,
+    merge_existing_build,
+    review_existing_build,
+    discard_existing_build,
+    check_existing_build,
+    get_existing_build_worktree,
+)
+from worktree import WorktreeManager, STAGING_WORKTREE_NAME
+from qa_loop import (
+    run_qa_validation_loop,
+    should_run_qa,
+    is_qa_approved,
+    print_qa_status,
+)
 
 
 # Configuration
@@ -79,22 +112,29 @@ def list_specs(project_dir: Path) -> list[dict]:
         if not spec_file.exists():
             continue
 
-        # Check progress
-        feature_list = spec_folder / "feature_list.json"
-        if feature_list.exists():
-            passing, total = count_passing_tests(spec_folder)
+        # Check for existing build in worktree
+        has_build = get_existing_build_worktree(project_dir, folder_name) is not None
+
+        # Check progress via implementation_plan.json
+        plan_file = spec_folder / "implementation_plan.json"
+        if plan_file.exists():
+            completed, total = count_chunks(spec_folder)
             if total > 0:
-                if passing == total:
+                if completed == total:
                     status = "complete"
                 else:
                     status = "in_progress"
-                progress = f"{passing}/{total}"
+                progress = f"{completed}/{total}"
             else:
                 status = "initialized"
                 progress = "0/0"
         else:
             status = "pending"
             progress = "-"
+
+        # Add build indicator
+        if has_build:
+            status = f"{status} (has build)"
 
         specs.append({
             "number": number,
@@ -103,6 +143,7 @@ def list_specs(project_dir: Path) -> list[dict]:
             "path": spec_folder,
             "status": status,
             "progress": progress,
+            "has_build": has_build,
         })
 
     return specs
@@ -162,9 +203,13 @@ def print_specs_list(project_dir: Path) -> None:
     }
 
     for spec in specs:
-        symbol = status_symbols.get(spec["status"], "[??]")
+        # Get base status for symbol
+        base_status = spec["status"].split(" ")[0]
+        symbol = status_symbols.get(base_status, "[??]")
+
         print(f"  {symbol} {spec['folder']}")
-        print(f"       Status: {spec['status']} | Progress: {spec['progress']}")
+        status_line = f"       Status: {spec['status']} | Chunks: {spec['progress']}"
+        print(status_line)
         print()
 
     print("-" * 70)
@@ -188,11 +233,15 @@ Examples:
   python auto-build/run.py --spec 001
   python auto-build/run.py --spec 001-initial-app
 
-  # Limit iterations for testing
-  python auto-build/run.py --spec 001 --max-iterations 5
+  # Workspace management (after build completes)
+  python auto-build/run.py --spec 001 --merge     # Add build to your project
+  python auto-build/run.py --spec 001 --review    # See what was built
+  python auto-build/run.py --spec 001 --discard   # Delete build (with confirmation)
 
-  # Use a specific model
-  python auto-build/run.py --spec 001 --model claude-opus-4-5-20251101
+  # Advanced options
+  python auto-build/run.py --spec 001 --parallel 2   # Use 2 parallel workers
+  python auto-build/run.py --spec 001 --direct       # Skip workspace isolation
+  python auto-build/run.py --spec 001 --isolated     # Force workspace isolation
 
 Prerequisites:
   1. Create a spec first: claude /spec
@@ -229,7 +278,7 @@ Environment Variables:
         "--max-iterations",
         type=int,
         default=None,
-        help="Maximum number of agent sessions (default: unlimited - runs until all tests pass)",
+        help="Maximum number of agent sessions (default: unlimited)",
     )
 
     parser.add_argument(
@@ -243,6 +292,61 @@ Environment Variables:
         "--verbose",
         action="store_true",
         help="Enable verbose output",
+    )
+
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Number of parallel workers (default: 1 = sequential). Use 2-3 for parallelism.",
+    )
+
+    # Workspace options
+    workspace_group = parser.add_mutually_exclusive_group()
+    workspace_group.add_argument(
+        "--isolated",
+        action="store_true",
+        help="Force building in isolated workspace (safer)",
+    )
+    workspace_group.add_argument(
+        "--direct",
+        action="store_true",
+        help="Build directly in your project (no isolation)",
+    )
+
+    # Build management commands
+    build_group = parser.add_mutually_exclusive_group()
+    build_group.add_argument(
+        "--merge",
+        action="store_true",
+        help="Merge an existing build into your project",
+    )
+    build_group.add_argument(
+        "--review",
+        action="store_true",
+        help="Review what an existing build contains",
+    )
+    build_group.add_argument(
+        "--discard",
+        action="store_true",
+        help="Discard an existing build (requires confirmation)",
+    )
+
+    # QA options
+    parser.add_argument(
+        "--qa",
+        action="store_true",
+        help="Run QA validation loop on a completed build",
+    )
+    parser.add_argument(
+        "--qa-status",
+        action="store_true",
+        help="Show QA validation status for a spec",
+    )
+    parser.add_argument(
+        "--skip-qa",
+        action="store_true",
+        help="Skip automatic QA validation after build completes",
     )
 
     return parser.parse_args()
@@ -272,6 +376,22 @@ def validate_environment(spec_dir: Path) -> bool:
         print(f"\nError: spec.md not found in {spec_dir}")
         valid = False
 
+    # Check Linear integration (optional but show status)
+    if is_linear_enabled():
+        print("Linear integration: ENABLED")
+        # Show Linear project status if initialized
+        project_dir = spec_dir.parent.parent  # auto-build/specs/001-name -> project root
+        linear_manager = LinearManager(spec_dir, project_dir)
+        if linear_manager.is_initialized:
+            summary = linear_manager.get_progress_summary()
+            print(f"  Project: {summary.get('project_name', 'Unknown')}")
+            print(f"  Issues: {summary.get('mapped_chunks', 0)}/{summary.get('total_chunks', 0)} mapped")
+        else:
+            print("  Status: Will be initialized during planner session")
+    else:
+        print("Linear integration: DISABLED (set LINEAR_API_KEY to enable)")
+
+    print()
     return valid
 
 
@@ -280,6 +400,7 @@ def print_banner() -> None:
     print("\n" + "=" * 70)
     print("  AUTO-BUILD FRAMEWORK")
     print("  Autonomous Multi-Session Coding Agent")
+    print("  Chunk-Based Implementation with Phase Dependencies")
     print("=" * 70)
 
 
@@ -319,15 +440,76 @@ def main() -> None:
         print_specs_list(project_dir)
         sys.exit(1)
 
+    # Handle build management commands
+    if args.merge:
+        merge_existing_build(project_dir, spec_dir.name)
+        return
+
+    if args.review:
+        review_existing_build(project_dir, spec_dir.name)
+        return
+
+    if args.discard:
+        discard_existing_build(project_dir, spec_dir.name)
+        return
+
+    # Handle QA commands
+    if args.qa_status:
+        print_banner()
+        print(f"\nSpec: {spec_dir.name}\n")
+        print_qa_status(spec_dir)
+        return
+
+    if args.qa:
+        # Run QA validation loop directly
+        print_banner()
+        print(f"\nRunning QA validation for: {spec_dir.name}")
+        if not validate_environment(spec_dir):
+            sys.exit(1)
+
+        if not should_run_qa(spec_dir):
+            if is_qa_approved(spec_dir):
+                print("\n✅ Build already approved by QA.")
+            else:
+                completed, total = count_chunks(spec_dir)
+                print(f"\n❌ Build not complete ({completed}/{total} chunks).")
+                print("Complete all chunks before running QA validation.")
+            return
+
+        try:
+            approved = asyncio.run(
+                run_qa_validation_loop(
+                    project_dir=project_dir,
+                    spec_dir=spec_dir,
+                    model=args.model,
+                    verbose=args.verbose,
+                )
+            )
+            if approved:
+                print("\n✅ QA validation passed. Ready for merge.")
+            else:
+                print("\n❌ QA validation incomplete. See reports for details.")
+                sys.exit(1)
+        except KeyboardInterrupt:
+            print("\n\nQA validation paused.")
+            print(f"Resume with: python auto-build/run.py --spec {spec_dir.name} --qa")
+        return
+
+    # Normal build flow
     print_banner()
     print(f"\nProject directory: {project_dir}")
     print(f"Spec: {spec_dir.name}")
     print(f"Model: {args.model}")
 
+    if args.parallel > 1:
+        print(f"Parallel mode: {args.parallel} workers")
+    else:
+        print("Sequential mode: 1 worker")
+
     if args.max_iterations:
         print(f"Max iterations: {args.max_iterations}")
     else:
-        print("Max iterations: Unlimited (runs until all tests pass)")
+        print("Max iterations: Unlimited (runs until all chunks complete)")
 
     print()
 
@@ -335,22 +517,124 @@ def main() -> None:
     if not validate_environment(spec_dir):
         sys.exit(1)
 
-    # Run the autonomous agent
+    # Check for existing build
+    if get_existing_build_worktree(project_dir, spec_dir.name):
+        continue_existing = check_existing_build(project_dir, spec_dir.name)
+        if continue_existing:
+            # Continue with existing worktree
+            pass
+        else:
+            # User chose to start fresh or merged existing
+            pass
+
+    # Choose workspace (skip for parallel mode - it always uses worktrees)
+    working_dir = project_dir
+    worktree_manager = None
+
+    if args.parallel > 1:
+        # Parallel mode always uses worktrees (managed by coordinator)
+        workspace_mode = WorkspaceMode.ISOLATED
+        print("Parallel mode uses isolated workspaces automatically.")
+    else:
+        # Sequential mode - let user choose
+        workspace_mode = choose_workspace(
+            project_dir,
+            spec_dir.name,
+            force_isolated=args.isolated,
+            force_direct=args.direct,
+        )
+
+        if workspace_mode == WorkspaceMode.ISOLATED:
+            working_dir, worktree_manager = setup_workspace(
+                project_dir, spec_dir.name, workspace_mode
+            )
+
+    # Run the autonomous agent (sequential or parallel)
     try:
-        asyncio.run(
-            run_autonomous_agent(
-                project_dir=project_dir,
+        if args.parallel > 1:
+            # Parallel mode with multiple workers (uses staging worktree)
+            coordinator = SwarmCoordinator(
                 spec_dir=spec_dir,
+                project_dir=project_dir,
+                max_workers=args.parallel,
                 model=args.model,
-                max_iterations=args.max_iterations,
                 verbose=args.verbose,
             )
-        )
+            asyncio.run(coordinator.run_parallel())
+
+            # After parallel completion, show staging worktree info
+            staging_manager = WorktreeManager(project_dir)
+            staging_info = staging_manager.get_staging_info()
+            if staging_info:
+                choice = finalize_workspace(project_dir, spec_dir.name, staging_manager)
+                handle_workspace_choice(choice, project_dir, spec_dir.name, staging_manager)
+        else:
+            # Sequential mode
+            asyncio.run(
+                run_autonomous_agent(
+                    project_dir=working_dir,  # Use worktree if isolated
+                    spec_dir=spec_dir,
+                    model=args.model,
+                    max_iterations=args.max_iterations,
+                    verbose=args.verbose,
+                )
+            )
+
+            # Post-build finalization (only for isolated sequential mode)
+            if worktree_manager:
+                choice = finalize_workspace(project_dir, spec_dir.name, worktree_manager)
+                handle_workspace_choice(choice, project_dir, spec_dir.name, worktree_manager)
+
+        # Run QA validation after build completes (unless skipped)
+        if not args.skip_qa and should_run_qa(spec_dir):
+            print("\n" + "=" * 70)
+            print("  BUILD COMPLETE - STARTING QA VALIDATION")
+            print("=" * 70)
+            print("\nAll chunks completed. Now running QA validation loop...")
+            print("This ensures production-quality output before sign-off.\n")
+
+            try:
+                approved = asyncio.run(
+                    run_qa_validation_loop(
+                        project_dir=working_dir,
+                        spec_dir=spec_dir,
+                        model=args.model,
+                        verbose=args.verbose,
+                    )
+                )
+
+                if approved:
+                    print("\n" + "=" * 70)
+                    print("  ✅ BUILD AND QA COMPLETE")
+                    print("=" * 70)
+                    print("\nAll acceptance criteria verified.")
+                    print("The implementation is production-ready.")
+                    print("\nNext steps:")
+                    print("  1. Review the auto-build/* branch")
+                    print("  2. Create a PR and merge to main")
+                else:
+                    print("\n" + "=" * 70)
+                    print("  ⚠️  QA VALIDATION INCOMPLETE")
+                    print("=" * 70)
+                    print("\nSome issues require manual attention.")
+                    print(f"See: {spec_dir / 'qa_report.md'}")
+                    print(f"Or:  {spec_dir / 'QA_FIX_REQUEST.md'}")
+                    print(f"\nResume QA: python auto-build/run.py --spec {spec_dir.name} --qa")
+            except KeyboardInterrupt:
+                print("\n\nQA validation paused.")
+                print(f"Resume: python auto-build/run.py --spec {spec_dir.name} --qa")
+
     except KeyboardInterrupt:
         print("\n\n" + "-" * 70)
         print("  PAUSED BY USER (Ctrl+C)")
         print("-" * 70)
-        print("\nProgress has been saved via Git commits.")
+        print("\nProgress has been saved.")
+
+        # Note about workspace
+        if worktree_manager:
+            print("\nYour build is in a separate workspace and is safe.")
+            print(f"To see it: python auto-build/run.py --spec {spec_dir.name} --review")
+            print(f"To add it: python auto-build/run.py --spec {spec_dir.name} --merge")
 
         # Offer to add human input
         try:
@@ -367,18 +651,18 @@ def main() -> None:
             print("  TIP: To copy text, use Cmd+C (macOS) or Ctrl+Shift+C (Linux)")
             print("       Ctrl+C in terminal is reserved for interrupt signals")
             print()
-            
+
             choice = input("Your choice [1/2/3/n/q]: ").strip().lower()
 
             if choice == 'q':
                 print("\nExiting...")
                 sys.exit(0)
-            
+
             if choice == '3':
                 # Read from file
                 print("\nEnter the path to your instructions file:")
                 file_path = input("> ").strip()
-                
+
                 if file_path:
                     try:
                         # Expand ~ and resolve path
@@ -393,7 +677,7 @@ def main() -> None:
                         human_input = ""
                 else:
                     human_input = ""
-                    
+
             elif choice in ['1', '2', 'y', 'yes']:
                 print("\n" + "-" * 70)
                 print("Enter/paste your instructions below.")

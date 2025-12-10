@@ -50,3 +50,13 @@ chromium-profile/
 # OS
 .DS_Store
 Thumbs.db
+
+# Git worktrees (used by parallel mode)
+.worktrees/
+
+# Claude Code settings (project-specific)
+.claude_settings.json
+.auto-build-security.json
+
+# Tests (development only)
+tests/
