@@ -11,10 +11,12 @@ Architecture:
 - Post-session processing updates memory automatically (100% reliable)
 
 Enhanced with status file updates for ccstatusline integration.
+Enhanced with Graphiti memory for cross-session context retrieval.
 """
 
 import asyncio
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -45,6 +47,7 @@ from linear_integration import (
     is_linear_enabled,
     prepare_coder_linear_instructions,
 )
+from graphiti_config import is_graphiti_enabled
 from ui import (
     Icons,
     icon,
@@ -62,10 +65,166 @@ from ui import (
     BuildState,
 )
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 
 # Configuration
 AUTO_CONTINUE_DELAY_SECONDS = 3
 HUMAN_INTERVENTION_FILE = "PAUSE"
+
+
+# =============================================================================
+# Graphiti Memory Integration
+# =============================================================================
+
+async def get_graphiti_context(
+    spec_dir: Path,
+    project_dir: Path,
+    chunk: dict,
+) -> Optional[str]:
+    """
+    Retrieve relevant context from Graphiti for the current chunk.
+
+    This searches the knowledge graph for context relevant to the chunk's
+    task description, returning past insights, patterns, and gotchas.
+
+    Args:
+        spec_dir: Spec directory
+        project_dir: Project root directory
+        chunk: The current chunk being worked on
+
+    Returns:
+        Formatted context string or None if unavailable
+    """
+    if not is_graphiti_enabled():
+        return None
+
+    try:
+        from graphiti_memory import GraphitiMemory
+
+        # Create memory manager
+        memory = GraphitiMemory(spec_dir, project_dir)
+
+        if not memory.is_enabled:
+            return None
+
+        # Build search query from chunk description
+        chunk_desc = chunk.get("description", "")
+        chunk_id = chunk.get("id", "")
+        query = f"{chunk_desc} {chunk_id}".strip()
+
+        if not query:
+            await memory.close()
+            return None
+
+        # Get relevant context
+        context_items = await memory.get_relevant_context(query, num_results=5)
+
+        # Also get recent session history
+        session_history = await memory.get_session_history(limit=3)
+
+        await memory.close()
+
+        if not context_items and not session_history:
+            return None
+
+        # Format the context
+        sections = ["## Graphiti Memory Context\n"]
+        sections.append("_Retrieved from knowledge graph for this chunk:_\n")
+
+        if context_items:
+            sections.append("### Relevant Knowledge\n")
+            for item in context_items:
+                content = item.get("content", "")[:500]  # Truncate
+                item_type = item.get("type", "unknown")
+                sections.append(f"- **[{item_type}]** {content}\n")
+
+        if session_history:
+            sections.append("### Recent Session Insights\n")
+            for session in session_history[:2]:  # Only show last 2
+                session_num = session.get("session_number", "?")
+                recommendations = session.get("recommendations_for_next_session", [])
+                if recommendations:
+                    sections.append(f"**Session {session_num} recommendations:**")
+                    for rec in recommendations[:3]:  # Limit to 3
+                        sections.append(f"- {rec}")
+                    sections.append("")
+
+        return "\n".join(sections)
+
+    except ImportError:
+        logger.debug("Graphiti packages not installed")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get Graphiti context: {e}")
+        return None
+
+
+async def save_session_to_graphiti(
+    spec_dir: Path,
+    project_dir: Path,
+    chunk_id: str,
+    session_num: int,
+    success: bool,
+    chunks_completed: list[str],
+    discoveries: Optional[dict] = None,
+) -> bool:
+    """
+    Save session insights to Graphiti knowledge graph.
+
+    This is called after each session to persist learnings.
+
+    Args:
+        spec_dir: Spec directory
+        project_dir: Project root directory
+        chunk_id: The chunk that was worked on
+        session_num: Current session number
+        success: Whether the chunk was completed successfully
+        chunks_completed: List of chunk IDs completed this session
+        discoveries: Optional dict with file discoveries, patterns, gotchas
+
+    Returns:
+        True if saved successfully
+    """
+    if not is_graphiti_enabled():
+        return False
+
+    try:
+        from graphiti_memory import GraphitiMemory
+
+        memory = GraphitiMemory(spec_dir, project_dir)
+
+        if not memory.is_enabled:
+            return False
+
+        # Build insights structure matching memory.py format
+        insights = {
+            "chunks_completed": chunks_completed,
+            "discoveries": discoveries or {
+                "files_understood": {},
+                "patterns_found": [],
+                "gotchas_encountered": [],
+            },
+            "what_worked": [f"Implemented chunk: {chunk_id}"] if success else [],
+            "what_failed": [] if success else [f"Failed to complete chunk: {chunk_id}"],
+            "recommendations_for_next_session": [],
+        }
+
+        result = await memory.save_session_insights(session_num, insights)
+        await memory.close()
+
+        if result:
+            logger.info(f"Session {session_num} insights saved to Graphiti")
+
+        return result
+
+    except ImportError:
+        logger.debug("Graphiti packages not installed")
+        return False
+    except Exception as e:
+        logger.warning(f"Failed to save to Graphiti: {e}")
+        return False
 
 
 def get_latest_commit(project_dir: Path) -> Optional[str]:
@@ -218,6 +377,25 @@ def post_session_processing(
                 git_commit=commit_after or "",
             )
             print_status("Linear session recorded", "success")
+
+        # Save to Graphiti if enabled (async, fire-and-forget)
+        if is_graphiti_enabled():
+            try:
+                # Run async save in a non-blocking way
+                asyncio.create_task(
+                    save_session_to_graphiti(
+                        spec_dir=spec_dir,
+                        project_dir=project_dir,
+                        chunk_id=chunk_id,
+                        session_num=session_num,
+                        success=True,
+                        chunks_completed=[chunk_id],
+                    )
+                )
+                print_status("Graphiti session save queued", "success")
+            except RuntimeError:
+                # Not in async context, skip
+                logger.debug("Skipping Graphiti save - not in async context")
 
         return True
 
@@ -539,6 +717,12 @@ async def run_autonomous_agent(
             context = load_chunk_context(spec_dir, project_dir, next_chunk)
             if context.get("patterns") or context.get("files_to_modify"):
                 prompt += "\n\n" + format_context_for_prompt(context)
+
+            # Retrieve and append Graphiti memory context (if enabled)
+            graphiti_context = await get_graphiti_context(spec_dir, project_dir, next_chunk)
+            if graphiti_context:
+                prompt += "\n\n" + graphiti_context
+                print_status("Graphiti memory context loaded", "success")
 
             # Show what we're working on
             print(f"Working on: {highlight(chunk_id)}")
