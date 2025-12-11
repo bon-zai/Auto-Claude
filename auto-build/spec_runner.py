@@ -59,6 +59,7 @@ elif dev_env_file.exists():
 
 from client import create_client
 from validate_spec import SpecValidator, auto_fix_plan
+from linear_updater import is_linear_enabled, create_linear_task
 from ui import (
     Icons,
     icon,
@@ -1407,6 +1408,19 @@ Read the failed files, understand the errors, and fix them.
 
         # Rename spec folder with better name from requirements
         self._rename_spec_dir_from_requirements()
+
+        # === CREATE LINEAR TASK (if enabled) ===
+        if is_linear_enabled():
+            print_status("Creating Linear task...", "progress")
+            linear_state = await create_linear_task(
+                spec_dir=self.spec_dir,
+                title=self.task_description or self.spec_dir.name,
+                description=f"Auto-build spec: {self.spec_dir.name}",
+            )
+            if linear_state:
+                print_status(f"Linear task created: {linear_state.task_id}", "success")
+            else:
+                print_status("Linear task creation failed (continuing without)", "warning")
 
         # === PHASE 3: AI COMPLEXITY ASSESSMENT ===
         result = await run_phase("complexity_assessment", self.phase_complexity_assessment_with_requirements)

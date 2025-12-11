@@ -20,6 +20,14 @@ from claude_code_sdk import ClaudeSDKClient
 
 from client import create_client
 from progress import count_chunks, is_build_complete
+from linear_updater import (
+    is_linear_enabled,
+    LinearTaskState,
+    linear_qa_started,
+    linear_qa_approved,
+    linear_qa_rejected,
+    linear_qa_max_iterations,
+)
 
 
 # Configuration
@@ -373,6 +381,16 @@ async def run_qa_validation_loop(
         print("\n✅ Build already approved by QA.")
         return True
 
+    # Check Linear integration status
+    linear_task = None
+    if is_linear_enabled():
+        linear_task = LinearTaskState.load(spec_dir)
+        if linear_task and linear_task.task_id:
+            print(f"Linear task: {linear_task.task_id}")
+            # Update Linear to "In Review" when QA starts
+            await linear_qa_started(spec_dir)
+            print("Linear task moved to 'In Review'")
+
     qa_iteration = get_qa_iteration_count(spec_dir)
 
     while qa_iteration < MAX_QA_ITERATIONS:
@@ -397,10 +415,23 @@ async def run_qa_validation_loop(
             print("\nNext steps:")
             print("  1. Review the auto-build/* branch")
             print("  2. Create a PR and merge to main")
+
+            # Update Linear: QA approved, awaiting human review
+            if linear_task and linear_task.task_id:
+                await linear_qa_approved(spec_dir)
+                print("\nLinear: Task marked as QA approved, awaiting human review")
+
             return True
 
         elif status == "rejected":
             print(f"\n❌ QA found issues. Iteration {qa_iteration}/{MAX_QA_ITERATIONS}")
+
+            # Record rejection in Linear
+            if linear_task and linear_task.task_id:
+                # Count issues from QA report if available
+                qa_status = get_qa_signoff_status(spec_dir)
+                issues_count = len(qa_status.get("issues_found", [])) if qa_status else 0
+                await linear_qa_rejected(spec_dir, issues_count, qa_iteration)
 
             if qa_iteration >= MAX_QA_ITERATIONS:
                 print("\n⚠️  Maximum QA iterations reached.")
@@ -442,6 +473,11 @@ async def run_qa_validation_loop(
     qa_report_file = spec_dir / "qa_report.md"
     if qa_report_file.exists():
         print(f"See: {qa_report_file}")
+
+    # Update Linear: max iterations reached, needs human intervention
+    if linear_task and linear_task.task_id:
+        await linear_qa_max_iterations(spec_dir, qa_iteration)
+        print("\nLinear: Task marked as needing human intervention")
 
     print("\nManual intervention required.")
     return False

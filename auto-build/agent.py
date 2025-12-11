@@ -42,10 +42,14 @@ from prompt_generator import (
 )
 from prompts import is_first_run
 from recovery import RecoveryManager
-from linear_integration import (
-    LinearManager,
+from linear_updater import (
     is_linear_enabled,
-    prepare_coder_linear_instructions,
+    LinearTaskState,
+    linear_task_started,
+    linear_chunk_completed,
+    linear_chunk_failed,
+    linear_build_complete,
+    linear_task_stuck,
 )
 from graphiti_config import is_graphiti_enabled
 from ui import (
@@ -287,7 +291,7 @@ def find_phase_for_chunk(plan: dict, chunk_id: str) -> Optional[dict]:
     return None
 
 
-def post_session_processing(
+async def post_session_processing(
     spec_dir: Path,
     project_dir: Path,
     chunk_id: str,
@@ -295,7 +299,7 @@ def post_session_processing(
     commit_before: Optional[str],
     commit_count_before: int,
     recovery_manager: RecoveryManager,
-    linear_manager: Optional[LinearManager] = None,
+    linear_enabled: bool = False,
     status_manager: Optional[StatusManager] = None,
 ) -> bool:
     """
@@ -311,7 +315,7 @@ def post_session_processing(
         commit_before: Git commit hash before session
         commit_count_before: Number of commits before session
         recovery_manager: Recovery manager instance
-        linear_manager: Optional Linear integration manager
+        linear_enabled: Whether Linear integration is enabled
         status_manager: Optional status manager for ccstatusline
 
     Returns:
@@ -368,15 +372,16 @@ def post_session_processing(
             print_status(f"Recorded good commit: {commit_after[:8]}", "success")
 
         # Record Linear session result (if enabled)
-        if linear_manager and linear_manager.is_initialized:
-            comment = linear_manager.record_session_result(
+        if linear_enabled:
+            # Get progress counts for the comment
+            chunks_detail = count_chunks_detailed(spec_dir)
+            await linear_chunk_completed(
+                spec_dir=spec_dir,
                 chunk_id=chunk_id,
-                session_num=session_num,
-                success=True,
-                approach=f"Implemented: {chunk.get('description', 'chunk')[:100]}",
-                git_commit=commit_after or "",
+                completed_count=chunks_detail["completed"],
+                total_count=chunks_detail["total"],
             )
-            print_status("Linear session recorded", "success")
+            print_status("Linear progress recorded", "success")
 
         # Save to Graphiti if enabled (async, fire-and-forget)
         if is_graphiti_enabled():
@@ -417,14 +422,13 @@ def post_session_processing(
             print_status(f"Recorded partial progress commit: {commit_after[:8]}", "info")
 
         # Record Linear session result (if enabled)
-        if linear_manager and linear_manager.is_initialized:
-            linear_manager.record_session_result(
+        if linear_enabled:
+            attempt_count = recovery_manager.get_attempt_count(chunk_id)
+            await linear_chunk_failed(
+                spec_dir=spec_dir,
                 chunk_id=chunk_id,
-                session_num=session_num,
-                success=False,
-                approach="Session ended with chunk in_progress",
-                error="Chunk not marked as completed",
-                git_commit=commit_after or "",
+                attempt=attempt_count,
+                error_summary="Session ended without completion",
             )
 
         return False
@@ -442,13 +446,13 @@ def post_session_processing(
         )
 
         # Record Linear session result (if enabled)
-        if linear_manager and linear_manager.is_initialized:
-            linear_manager.record_session_result(
+        if linear_enabled:
+            attempt_count = recovery_manager.get_attempt_count(chunk_id)
+            await linear_chunk_failed(
+                spec_dir=spec_dir,
                 chunk_id=chunk_id,
-                session_num=session_num,
-                success=False,
-                approach="Session ended without progress",
-                error=f"Chunk status is {chunk_status}",
+                attempt=attempt_count,
+                error_summary=f"Chunk status: {chunk_status}",
             )
 
         return False
@@ -572,18 +576,17 @@ async def run_autonomous_agent(
         in_progress=chunks["in_progress"],
     )
 
-    # Initialize Linear manager (optional integration)
-    linear_manager = None
+    # Check Linear integration status
+    linear_task = None
     if is_linear_enabled():
-        linear_manager = LinearManager(spec_dir, project_dir)
-        if linear_manager.is_enabled:
+        linear_task = LinearTaskState.load(spec_dir)
+        if linear_task and linear_task.task_id:
             print_status("Linear integration: ENABLED", "success")
-            if linear_manager.is_initialized:
-                summary = linear_manager.get_progress_summary()
-                print_key_value("Project", summary.get('project_name', 'Unknown'))
-                print_key_value("Issues", f"{summary.get('mapped_chunks', 0)}/{summary.get('total_chunks', 0)} mapped")
-            else:
-                print(muted("  Status: Not yet initialized (will setup during planner session)"))
+            print_key_value("Task", linear_task.task_id)
+            print_key_value("Status", linear_task.status)
+            print()
+        else:
+            print_status("Linear enabled but no task created for this spec", "warning")
             print()
 
     # Check if this is a fresh start or continuation
@@ -603,6 +606,11 @@ async def run_autonomous_agent(
 
         # Update status for planning phase
         status_manager.update(state=BuildState.PLANNING)
+
+        # Update Linear to "In Progress" when build starts
+        if linear_task and linear_task.task_id:
+            print_status("Updating Linear task to In Progress...", "progress")
+            await linear_task_started(spec_dir)
     else:
         print(f"Continuing build: {highlight(spec_dir.name)}")
         print_progress_summary(spec_dir)
@@ -739,7 +747,8 @@ async def run_autonomous_agent(
 
         # === POST-SESSION PROCESSING (100% reliable) ===
         if chunk_id and not first_run:
-            success = post_session_processing(
+            linear_is_enabled = linear_task is not None and linear_task.task_id is not None
+            success = await post_session_processing(
                 spec_dir=spec_dir,
                 project_dir=project_dir,
                 chunk_id=chunk_id,
@@ -747,7 +756,7 @@ async def run_autonomous_agent(
                 commit_before=commit_before,
                 commit_count_before=commit_count_before,
                 recovery_manager=recovery_manager,
-                linear_manager=linear_manager,
+                linear_enabled=linear_is_enabled,
                 status_manager=status_manager,
             )
 
@@ -762,21 +771,25 @@ async def run_autonomous_agent(
                 print_status(f"Chunk {chunk_id} marked as STUCK after {attempt_count} attempts", "error")
                 print(muted("Consider: manual intervention or skipping this chunk"))
 
-                # Prepare Linear escalation data (if enabled)
-                if linear_manager and linear_manager.is_initialized:
-                    chunk_history = recovery_manager.get_chunk_history(chunk_id)
-                    escalation = linear_manager.prepare_stuck_escalation(
+                # Record stuck chunk in Linear (if enabled)
+                if linear_is_enabled:
+                    await linear_task_stuck(
+                        spec_dir=spec_dir,
                         chunk_id=chunk_id,
                         attempt_count=attempt_count,
-                        attempts=chunk_history.get("attempts", []),
-                        reason=f"Failed after {attempt_count} attempts",
                     )
-                    print_key_value("Linear escalation prepared for issue", escalation.get('issue_id'))
+                    print_status("Linear notified of stuck chunk", "info")
 
         # Handle session status
         if status == "complete":
             print_build_complete_banner(spec_dir)
             status_manager.update(state=BuildState.COMPLETE)
+
+            # Notify Linear that build is complete (moving to QA)
+            if linear_task and linear_task.task_id:
+                await linear_build_complete(spec_dir)
+                print_status("Linear notified: build complete, ready for QA", "success")
+
             break
 
         elif status == "continue":

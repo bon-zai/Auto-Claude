@@ -16,12 +16,6 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from linear_integration import (
-    is_linear_enabled,
-    prepare_planner_linear_instructions,
-    prepare_coder_linear_instructions,
-)
-
 
 def get_relative_spec_path(spec_dir: Path, project_dir: Path) -> str:
     """
@@ -237,10 +231,8 @@ Before marking complete, verify:
 - If you encounter a blocker, document it in build-progress.txt
 """.format(chunk_id=chunk_id, short_description=description[:50]))
 
-    # Add Linear instructions if enabled
-    linear_instructions = prepare_coder_linear_instructions(spec_dir, chunk_id)
-    if linear_instructions:
-        sections.append(linear_instructions)
+    # Note: Linear updates are now handled by Python orchestrator via linear_updater.py
+    # Agents no longer need to call Linear MCP tools directly
 
     return "\n".join(sections)
 
@@ -286,7 +278,6 @@ Store all build artifacts in this spec directory:
 - `{relative_spec}/implementation_plan.json` - Chunk-based implementation plan
 - `{relative_spec}/build-progress.txt` - Progress notes
 - `{relative_spec}/init.sh` - Environment setup script
-- `{relative_spec}/.linear_project.json` - Linear integration state (if enabled)
 
 The project root is your current working directory. Implement code in the project root,
 not in the spec directory.
@@ -294,10 +285,8 @@ not in the spec directory.
 ---
 
 """
-    # Add Linear integration instructions if enabled
-    linear_instructions = prepare_planner_linear_instructions(spec_dir)
-    if linear_instructions:
-        header += linear_instructions + "\n\n---\n\n"
+    # Note: Linear task creation and updates are now handled by Python orchestrator
+    # via linear_updater.py - agents no longer need Linear instructions in prompts
 
     return header + prompt
 

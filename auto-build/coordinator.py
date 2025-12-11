@@ -323,7 +323,6 @@ class SwarmCoordinator:
         from agent import run_agent_session
         from client import create_client
         from prompt_generator import generate_planner_prompt
-        from linear_integration import LinearManager, is_linear_enabled
 
         # Create client for planner (uses main project directory)
         client = create_client(self.project_dir, self.spec_dir, self.model)
@@ -345,15 +344,8 @@ class SwarmCoordinator:
 
         print_status("Implementation plan created successfully", "success")
 
-        # Initialize Linear integration if enabled
-        if is_linear_enabled():
-            linear_manager = LinearManager(self.spec_dir, self.project_dir)
-            if linear_manager.is_enabled and not linear_manager.is_initialized:
-                print_status("Initializing Linear integration...", "progress")
-                if linear_manager.initialize_from_plan():
-                    print_status("Linear project and issues created", "success")
-                else:
-                    print_status("Linear initialization failed (continuing without it)", "warning")
+        # Note: Linear task creation now happens in spec_runner.py after requirements gathering
+        # Linear status updates happen via linear_updater.py mini-agents
 
         return True
 

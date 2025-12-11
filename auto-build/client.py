@@ -13,7 +13,7 @@ from claude_code_sdk import ClaudeCodeOptions, ClaudeSDKClient
 from claude_code_sdk.types import HookMatcher
 
 from security import bash_security_hook
-from linear_integration import is_linear_enabled
+from linear_updater import is_linear_enabled
 
 
 # Puppeteer MCP tools for browser automation
