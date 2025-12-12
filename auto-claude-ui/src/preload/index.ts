@@ -103,6 +103,9 @@ const electronAPI: ElectronAPI = {
   ): Promise<IPCResult<Task>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CREATE, projectId, title, description, metadata),
 
+  deleteTask: (taskId: string): Promise<IPCResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_DELETE, taskId),
+
   startTask: (taskId: string, options?: TaskStartOptions): void =>
     ipcRenderer.send(IPC_CHANNELS.TASK_START, taskId, options),
 
@@ -130,6 +133,22 @@ const electronAPI: ElectronAPI = {
 
   checkTaskRunning: (taskId: string): Promise<IPCResult<boolean>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CHECK_RUNNING, taskId),
+
+  // ============================================
+  // Workspace Management (for human review)
+  // ============================================
+
+  getWorktreeStatus: (taskId: string): Promise<IPCResult<import('../shared/types').WorktreeStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_STATUS, taskId),
+
+  getWorktreeDiff: (taskId: string): Promise<IPCResult<import('../shared/types').WorktreeDiff>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_DIFF, taskId),
+
+  mergeWorktree: (taskId: string): Promise<IPCResult<import('../shared/types').WorktreeMergeResult>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_MERGE, taskId),
+
+  discardWorktree: (taskId: string): Promise<IPCResult<import('../shared/types').WorktreeDiscardResult>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_DISCARD, taskId),
 
   // ============================================
   // Event Listeners (main → renderer)

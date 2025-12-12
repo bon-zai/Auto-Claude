@@ -182,10 +182,7 @@ Verified:
 QA Fix Session: [N]"
 ```
 
-Push:
-```bash
-git push origin [branch-name]
-```
+**NOTE**: Do NOT push to remote. All work stays local until user reviews and approves.
 
 ---
 

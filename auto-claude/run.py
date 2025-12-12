@@ -108,35 +108,24 @@ from qa_loop import (
 # Configuration
 DEFAULT_MODEL = "claude-opus-4-5-20251101"
 
-# Dev specs directory (--dev mode) - gitignored, for developing auto-claude itself
-DEV_SPECS_DIR = "dev/auto-claude/specs"
-
 
 def get_specs_dir(project_dir: Path, dev_mode: bool = False) -> Path:
-    """Get the specs directory path based on project and mode.
+    """Get the specs directory path.
+
+    IMPORTANT: Only .auto-claude/ is considered an "installed" auto-claude.
+    The auto-claude/ folder (if it exists) is SOURCE CODE being developed,
+    not an installation. This allows Auto Claude to be used to develop itself.
 
     Args:
         project_dir: The project root directory
-        dev_mode: If True, use dev/auto-claude/specs/ for framework development
+        dev_mode: Deprecated, kept for API compatibility. Has no effect.
 
     Returns:
-        Path to the specs directory within the project
+        Path to the specs directory within .auto-claude/
     """
-    if dev_mode:
-        return project_dir / DEV_SPECS_DIR
-
-    # Check for .auto-claude first (hidden folder for external projects)
-    hidden_auto_claude = project_dir / ".auto-claude"
-    if hidden_auto_claude.exists():
-        return hidden_auto_claude / "specs"
-
-    # Then check for auto-claude (visible folder)
-    visible_auto_claude = project_dir / "auto-claude"
-    if visible_auto_claude.exists():
-        return visible_auto_claude / "specs"
-
-    # Default to .auto-claude for external projects
-    return hidden_auto_claude / "specs"
+    # Always use .auto-claude/specs - this is the installed instance
+    # The auto-claude/ folder is source code, not an installation
+    return project_dir / ".auto-claude" / "specs"
 
 
 def list_specs(project_dir: Path, dev_mode: bool = False) -> list[dict]:
@@ -419,6 +408,13 @@ Environment Variables:
         help="Dev mode: use specs from dev/auto-claude/specs/ (gitignored) for framework development",
     )
 
+    # Non-interactive mode (for UI/automation)
+    parser.add_argument(
+        "--auto-continue",
+        action="store_true",
+        help="Non-interactive mode: auto-continue existing builds, skip prompts (for UI integration)",
+    )
+
     return parser.parse_args()
 
 
@@ -503,22 +499,14 @@ def main() -> None:
         project_dir = Path.cwd()
         debug("run.py", "Using current working directory", project_dir=str(project_dir))
 
-        # Auto-detect if running from within auto-claude directory
-        # Handle both: auto-claude/ and dev/auto-claude/
+        # Auto-detect if running from within auto-claude directory (the source code)
         if project_dir.name == "auto-claude" and (project_dir / "run.py").exists():
-            parent = project_dir.parent
-            # Check if we're in dev/auto-claude (parent is 'dev')
-            if parent.name == "dev" and (parent.parent / "auto-claude" / "run.py").exists():
-                # Running from dev/auto-claude, go up 2 levels
-                project_dir = parent.parent
-            else:
-                # Running from auto-claude, go up 1 level
-                project_dir = parent
+            # Running from within auto-claude/ source directory, go up 1 level
+            project_dir = project_dir.parent
 
-    # Show dev mode info
+    # Note: --dev flag is deprecated but kept for API compatibility
     if args.dev:
-        print(f"\n{icon(Icons.GEAR)} DEV MODE: Using specs from dev/auto-claude/specs/")
-        print(f"  Code changes can target the entire project root\n")
+        print(f"\n{icon(Icons.GEAR)} Note: --dev flag is deprecated. All specs now use .auto-claude/specs/\n")
 
     # Handle --list
     if args.list:
@@ -629,13 +617,18 @@ def main() -> None:
 
     # Check for existing build
     if get_existing_build_worktree(project_dir, spec_dir.name):
-        continue_existing = check_existing_build(project_dir, spec_dir.name)
-        if continue_existing:
-            # Continue with existing worktree
-            pass
+        if args.auto_continue:
+            # Non-interactive mode: auto-continue with existing build
+            debug("run.py", "Auto-continue mode: continuing with existing build")
+            print("Auto-continue: Resuming existing build...")
         else:
-            # User chose to start fresh or merged existing
-            pass
+            continue_existing = check_existing_build(project_dir, spec_dir.name)
+            if continue_existing:
+                # Continue with existing worktree
+                pass
+            else:
+                # User chose to start fresh or merged existing
+                pass
 
     # Choose workspace (skip for parallel mode - it always uses worktrees)
     working_dir = project_dir
@@ -646,12 +639,13 @@ def main() -> None:
         workspace_mode = WorkspaceMode.ISOLATED
         print("Parallel mode uses isolated workspaces automatically.")
     else:
-        # Sequential mode - let user choose
+        # Sequential mode - let user choose (or auto-select if --auto-continue)
         workspace_mode = choose_workspace(
             project_dir,
             spec_dir.name,
             force_isolated=args.isolated,
             force_direct=args.direct,
+            auto_continue=args.auto_continue,
         )
 
         if workspace_mode == WorkspaceMode.ISOLATED:

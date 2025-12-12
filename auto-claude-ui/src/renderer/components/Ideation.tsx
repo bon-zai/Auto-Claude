@@ -1150,13 +1150,13 @@ function LowHangingFruitDetails({ idea }: { idea: LowHangingFruitIdea }) {
           <div className="text-xs text-muted-foreground">Effort</div>
         </Card>
         <Card className="p-3 text-center">
-          <div className="text-lg font-semibold">{idea.affectedFiles.length}</div>
+          <div className="text-lg font-semibold">{idea.affectedFiles?.length ?? 0}</div>
           <div className="text-xs text-muted-foreground">Files</div>
         </Card>
       </div>
 
       {/* Builds Upon */}
-      {idea.buildsUpon.length > 0 && (
+      {idea.buildsUpon && idea.buildsUpon.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <TrendingUp className="h-4 w-4" />
@@ -1173,7 +1173,7 @@ function LowHangingFruitDetails({ idea }: { idea: LowHangingFruitIdea }) {
       )}
 
       {/* Affected Files */}
-      {idea.affectedFiles.length > 0 && (
+      {idea.affectedFiles && idea.affectedFiles.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <FileCode className="h-4 w-4" />
@@ -1190,7 +1190,7 @@ function LowHangingFruitDetails({ idea }: { idea: LowHangingFruitIdea }) {
       )}
 
       {/* Existing Patterns */}
-      {idea.existingPatterns.length > 0 && (
+      {idea.existingPatterns && idea.existingPatterns.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2">Patterns to Follow</h3>
           <ul className="space-y-1">
@@ -1245,7 +1245,7 @@ function UIUXDetails({ idea }: { idea: UIUXImprovementIdea }) {
       </div>
 
       {/* Affected Components */}
-      {idea.affectedComponents.length > 0 && (
+      {idea.affectedComponents && idea.affectedComponents.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <FileCode className="h-4 w-4" />
@@ -1314,7 +1314,7 @@ function HighValueDetails({ idea }: { idea: HighValueFeatureIdea }) {
       )}
 
       {/* Acceptance Criteria */}
-      {idea.acceptanceCriteria.length > 0 && (
+      {idea.acceptanceCriteria && idea.acceptanceCriteria.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4" />
@@ -1332,7 +1332,7 @@ function HighValueDetails({ idea }: { idea: HighValueFeatureIdea }) {
       )}
 
       {/* Dependencies */}
-      {idea.dependencies.length > 0 && (
+      {idea.dependencies && idea.dependencies.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2">Dependencies</h3>
           <div className="flex flex-wrap gap-1">
@@ -1399,7 +1399,7 @@ function DocumentationGapDetails({ idea }: { idea: DocumentationGapIdea }) {
       </div>
 
       {/* Affected Areas */}
-      {idea.affectedAreas.length > 0 && (
+      {idea.affectedAreas && idea.affectedAreas.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <FileCode className="h-4 w-4" />
@@ -1439,7 +1439,7 @@ function SecurityHardeningDetails({ idea }: { idea: SecurityHardeningIdea }) {
         </Card>
         <Card className="p-3 text-center">
           <div className="text-lg font-semibold">
-            {idea.affectedFiles.length}
+            {idea.affectedFiles?.length ?? 0}
           </div>
           <div className="text-xs text-muted-foreground">Files</div>
         </Card>
@@ -1486,7 +1486,7 @@ function SecurityHardeningDetails({ idea }: { idea: SecurityHardeningIdea }) {
       </div>
 
       {/* Affected Files */}
-      {idea.affectedFiles.length > 0 && (
+      {idea.affectedFiles && idea.affectedFiles.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <FileCode className="h-4 w-4" />
@@ -1612,7 +1612,7 @@ function PerformanceOptimizationDetails({ idea }: { idea: PerformanceOptimizatio
       </div>
 
       {/* Affected Areas */}
-      {idea.affectedAreas.length > 0 && (
+      {idea.affectedAreas && idea.affectedAreas.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <FileCode className="h-4 w-4" />
@@ -1750,7 +1750,7 @@ function CodeQualityDetails({ idea }: { idea: CodeQualityIdea }) {
       )}
 
       {/* Affected Files */}
-      {idea.affectedFiles.length > 0 && (
+      {idea.affectedFiles && idea.affectedFiles.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <FileCode className="h-4 w-4" />

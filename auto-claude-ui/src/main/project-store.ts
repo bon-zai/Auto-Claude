@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import type { Project, ProjectSettings, Task, TaskStatus, TaskMetadata, ImplementationPlan } from '../shared/types';
-import { DEFAULT_PROJECT_SETTINGS, AUTO_BUILD_PATHS } from '../shared/constants';
+import { DEFAULT_PROJECT_SETTINGS, AUTO_BUILD_PATHS, getSpecsDir } from '../shared/constants';
 import { getAutoBuildPath } from './project-initializer';
 
 interface StoreData {
@@ -156,9 +156,10 @@ export class ProjectStore {
     const project = this.getProject(projectId);
     if (!project) return [];
 
-    // Use project's autoBuildPath if set, otherwise fallback to default
-    const autoBuildDir = project.autoBuildPath || 'auto-claude';
-    const specsDir = path.join(project.path, autoBuildDir, 'specs');
+    // Use devMode-aware path for specs directory
+    const devMode = project.settings.devMode ?? false;
+    const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+    const specsDir = path.join(project.path, specsBaseDir);
     if (!existsSync(specsDir)) return [];
 
     const tasks: Task[] = [];

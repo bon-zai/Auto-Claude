@@ -339,6 +339,11 @@ function MessageBubble({
           <p className="whitespace-pre-wrap">{message.content}</p>
         </div>
 
+        {/* Tool usage history for assistant messages */}
+        {!isUser && message.toolsUsed && message.toolsUsed.length > 0 && (
+          <ToolUsageHistory tools={message.toolsUsed} />
+        )}
+
         {/* Task suggestion card */}
         {message.suggestedTask && (
           <Card className="mt-3 border-primary/20 bg-primary/5">
@@ -409,6 +414,98 @@ function MessageBubble({
           </Card>
         )}
       </div>
+    </div>
+  );
+}
+
+// Tool usage history component for showing tools used in completed messages
+interface ToolUsageHistoryProps {
+  tools: Array<{
+    name: string;
+    input?: string;
+    timestamp: Date;
+  }>;
+}
+
+function ToolUsageHistory({ tools }: ToolUsageHistoryProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (tools.length === 0) return null;
+
+  // Group tools by name for summary
+  const toolCounts = tools.reduce((acc, tool) => {
+    acc[tool.name] = (acc[tool.name] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const getToolIcon = (toolName: string) => {
+    switch (toolName) {
+      case 'Read':
+        return FileText;
+      case 'Glob':
+        return FolderSearch;
+      case 'Grep':
+        return Search;
+      default:
+        return FileText;
+    }
+  };
+
+  const getToolColor = (toolName: string) => {
+    switch (toolName) {
+      case 'Read':
+        return 'text-blue-500';
+      case 'Glob':
+        return 'text-amber-500';
+      case 'Grep':
+        return 'text-green-500';
+      default:
+        return 'text-muted-foreground';
+    }
+  };
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <span className="flex items-center gap-1">
+          {Object.entries(toolCounts).map(([name, count]) => {
+            const Icon = getToolIcon(name);
+            return (
+              <span key={name} className={cn('flex items-center gap-0.5', getToolColor(name))}>
+                <Icon className="h-3 w-3" />
+                <span>{count}</span>
+              </span>
+            );
+          })}
+        </span>
+        <span>{tools.length} tool{tools.length !== 1 ? 's' : ''} used</span>
+        <span className="text-[10px]">{expanded ? '▲' : '▼'}</span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-1 rounded-md border border-border bg-muted/30 p-2">
+          {tools.map((tool, index) => {
+            const Icon = getToolIcon(tool.name);
+            return (
+              <div
+                key={`${tool.name}-${index}`}
+                className="flex items-center gap-2 text-xs"
+              >
+                <Icon className={cn('h-3 w-3 shrink-0', getToolColor(tool.name))} />
+                <span className="font-medium">{tool.name}</span>
+                {tool.input && (
+                  <span className="text-muted-foreground truncate max-w-[250px]">
+                    {tool.input}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

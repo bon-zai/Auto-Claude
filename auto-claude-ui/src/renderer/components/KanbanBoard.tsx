@@ -17,7 +17,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
-import { Plus } from 'lucide-react';
+import { Plus, Inbox, Loader2, Eye, CheckCircle2 } from 'lucide-react';
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
 import { TaskCard } from './TaskCard';
@@ -40,6 +40,47 @@ interface DroppableColumnProps {
   isOver: boolean;
   onAddClick?: () => void;
 }
+
+// Empty state content for each column
+const getEmptyStateContent = (status: TaskStatus): { icon: React.ReactNode; message: string; subtext?: string } => {
+  switch (status) {
+    case 'backlog':
+      return {
+        icon: <Inbox className="h-6 w-6 text-muted-foreground/50" />,
+        message: 'No tasks planned',
+        subtext: 'Add a task to get started'
+      };
+    case 'in_progress':
+      return {
+        icon: <Loader2 className="h-6 w-6 text-muted-foreground/50" />,
+        message: 'Nothing running',
+        subtext: 'Start a task from Planning'
+      };
+    case 'ai_review':
+      return {
+        icon: <Eye className="h-6 w-6 text-muted-foreground/50" />,
+        message: 'No tasks in review',
+        subtext: 'AI will review completed tasks'
+      };
+    case 'human_review':
+      return {
+        icon: <Eye className="h-6 w-6 text-muted-foreground/50" />,
+        message: 'Nothing to review',
+        subtext: 'Tasks await your approval here'
+      };
+    case 'done':
+      return {
+        icon: <CheckCircle2 className="h-6 w-6 text-muted-foreground/50" />,
+        message: 'No completed tasks',
+        subtext: 'Approved tasks appear here'
+      };
+    default:
+      return {
+        icon: <Inbox className="h-6 w-6 text-muted-foreground/50" />,
+        message: 'No tasks'
+      };
+  }
+};
 
 function DroppableColumn({ status, tasks, onTaskClick, isOver, onAddClick }: DroppableColumnProps) {
   const { setNodeRef } = useDroppable({
@@ -65,22 +106,24 @@ function DroppableColumn({ status, tasks, onTaskClick, isOver, onAddClick }: Dro
     }
   };
 
+  const emptyState = getEmptyStateContent(status);
+
   return (
     <div
       className={cn(
         'flex w-72 shrink-0 flex-col rounded-xl border border-white/5 bg-linear-to-b from-secondary/30 to-transparent backdrop-blur-sm transition-all duration-200',
         getColumnBorderColor(),
         'border-t-2',
-        isOver && 'bg-accent/10'
+        isOver && 'drop-zone-highlight'
       )}
     >
-      {/* Column header */}
-      <div className="flex items-center justify-between p-4">
-        <div className="flex items-center gap-2">
+      {/* Column header - enhanced styling */}
+      <div className="flex items-center justify-between p-4 border-b border-white/5">
+        <div className="flex items-center gap-2.5">
           <h2 className="font-semibold text-sm text-foreground">
             {TASK_STATUS_LABELS[status]}
           </h2>
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-xs font-medium text-muted-foreground">
+          <span className="column-count-badge">
             {tasks.length}
           </span>
         </div>
@@ -88,7 +131,7 @@ function DroppableColumn({ status, tasks, onTaskClick, isOver, onAddClick }: Dro
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="h-7 w-7 hover:bg-primary/10 hover:text-primary transition-colors"
             onClick={onAddClick}
           >
             <Plus className="h-4 w-4" />
@@ -98,20 +141,39 @@ function DroppableColumn({ status, tasks, onTaskClick, isOver, onAddClick }: Dro
 
       {/* Droppable task list */}
       <div ref={setNodeRef} className="flex-1 min-h-0">
-        <ScrollArea className="h-full px-3 pb-3">
+        <ScrollArea className="h-full px-3 pb-3 pt-2">
           <SortableContext
             items={taskIds}
             strategy={verticalListSortingStrategy}
           >
-            <div className="space-y-3 min-h-[100px]">
+            <div className="space-y-3 min-h-[120px]">
               {tasks.length === 0 ? (
                 <div
                   className={cn(
-                    'rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground transition-all duration-200',
-                    isOver && 'border-primary/50 bg-accent/30'
+                    'empty-column-dropzone flex flex-col items-center justify-center py-6',
+                    isOver && 'active'
                   )}
                 >
-                  {isOver ? 'Drop here' : 'No tasks'}
+                  {isOver ? (
+                    <>
+                      <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center mb-2">
+                        <Plus className="h-4 w-4 text-primary" />
+                      </div>
+                      <span className="text-sm font-medium text-primary">Drop here</span>
+                    </>
+                  ) : (
+                    <>
+                      {emptyState.icon}
+                      <span className="mt-2 text-sm font-medium text-muted-foreground/70">
+                        {emptyState.message}
+                      </span>
+                      {emptyState.subtext && (
+                        <span className="mt-0.5 text-xs text-muted-foreground/50">
+                          {emptyState.subtext}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </div>
               ) : (
                 tasks.map((task) => (
@@ -248,10 +310,10 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick }: KanbanBoardP
         ))}
       </div>
 
-      {/* Drag overlay - shows the card being dragged */}
+      {/* Drag overlay - enhanced visual feedback */}
       <DragOverlay>
         {activeTask ? (
-          <div className="opacity-95 rotate-2 scale-105 cursor-grabbing">
+          <div className="drag-overlay-card">
             <TaskCard task={activeTask} onClick={() => {}} />
           </div>
         ) : null}

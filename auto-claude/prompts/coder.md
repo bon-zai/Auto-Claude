@@ -642,11 +642,10 @@ git commit -m "auto-claude: Complete [chunk-id] - [chunk description]
 - Phase progress: [X]/[Y] chunks complete"
 ```
 
-### Push to Remote
+### DO NOT Push to Remote
 
-```bash
-git push origin auto-claude/[feature-name]
-```
+**IMPORTANT**: Do NOT run `git push`. All work stays local until the user reviews and approves.
+The user will push to remote after reviewing your changes in the isolated workspace.
 
 **Note**: Memory files (attempt_history.json, build_commits.json) are automatically
 updated by the orchestrator after each session. You don't need to update them manually.
@@ -680,7 +679,7 @@ Check complexity_assessment.json for dev_mode flag. If dev_mode is true, skip co
 # Only if dev_mode is false:
 git add build-progress.txt
 git commit -m "auto-claude: Update progress"
-git push
+# Do NOT push - user will push after review
 ```
 
 ---
@@ -882,10 +881,11 @@ Before context fills up:
 
 1. **Write session insights** - Document what you learned (Step 12, optional)
 2. **Commit all working code** - no uncommitted changes
-3. **Push to remote** - ensure progress is saved
-4. **Update build-progress.txt** - document what's next
-5. **Leave app working** - no broken state
-6. **No half-finished chunks** - complete or revert
+3. **Update build-progress.txt** - document what's next
+4. **Leave app working** - no broken state
+5. **No half-finished chunks** - complete or revert
+
+**NOTE**: Do NOT push to remote. All work stays local until user reviews and approves.
 
 The next session will:
 1. Read implementation_plan.json

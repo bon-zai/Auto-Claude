@@ -131,6 +131,39 @@ Each spec in `auto-claude/specs/XXX-name/` contains:
 - `qa_report.md` - QA validation results
 - `QA_FIX_REQUEST.md` - Issues to fix (when rejected)
 
+### Branching & Worktree Strategy
+
+Auto Claude uses git worktrees for isolated builds. All branches stay LOCAL until user explicitly pushes:
+
+**Single Worker Mode:**
+```
+main (user's branch)
+└── auto-claude/{spec-name}  ← staging branch (isolated worktree)
+```
+
+**Parallel Worker Mode:**
+```
+main (user's branch)
+└── auto-claude/{spec-name}  ← staging branch (accumulates all work)
+    ├── worker-1/{chunk-id}  ← temporary (merges to staging, then deleted)
+    ├── worker-2/{chunk-id}  ← temporary (merges to staging, then deleted)
+    └── worker-3/{chunk-id}  ← temporary (merges to staging, then deleted)
+```
+
+**Key principles:**
+- ONE unified staging branch per spec (`auto-claude/{spec-name}`)
+- Worker branches are temporary and LOCAL only
+- NO automatic pushes to GitHub - user controls when to push
+- User reviews in staging worktree (`.worktrees/auto-claude/`)
+- Final merge: staging → main (after user approval)
+
+**Workflow:**
+1. Build runs in isolated worktree on staging branch
+2. Parallel workers create temp branches, merge to staging, then delete
+3. User tests feature in `.worktrees/auto-claude/`
+4. User runs `--merge` to add to their project
+5. User pushes to remote when ready
+
 ### Security Model
 
 Three-layer defense:

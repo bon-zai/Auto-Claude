@@ -21,6 +21,8 @@ export interface ProjectSettings {
   linearSync: boolean;
   linearTeamId?: string;
   notifications: NotificationSettings;
+  /** Dev mode: use dev/auto-claude/specs/ for framework development */
+  devMode: boolean;
 }
 
 export interface NotificationSettings {
@@ -184,6 +186,41 @@ export interface TaskStartOptions {
   parallel?: boolean;
   workers?: number;
   model?: string;
+}
+
+// Workspace management types (for human review)
+export interface WorktreeStatus {
+  exists: boolean;
+  worktreePath?: string;
+  branch?: string;
+  baseBranch?: string;
+  commitCount?: number;
+  filesChanged?: number;
+  additions?: number;
+  deletions?: number;
+}
+
+export interface WorktreeDiff {
+  files: WorktreeDiffFile[];
+  summary: string;
+}
+
+export interface WorktreeDiffFile {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  additions: number;
+  deletions: number;
+}
+
+export interface WorktreeMergeResult {
+  success: boolean;
+  message: string;
+  conflictFiles?: string[];
+}
+
+export interface WorktreeDiscardResult {
+  success: boolean;
+  message: string;
 }
 
 // Stuck task recovery types
@@ -891,6 +928,13 @@ export interface ExistingChangelog {
 
 export type InsightsChatRole = 'user' | 'assistant';
 
+// Tool usage record for showing what tools the AI used
+export interface InsightsToolUsage {
+  name: string;
+  input?: string;
+  timestamp: Date;
+}
+
 export interface InsightsChatMessage {
   id: string;
   role: InsightsChatRole;
@@ -902,6 +946,8 @@ export interface InsightsChatMessage {
     description: string;
     metadata?: TaskMetadata;
   };
+  // Tools used during this response (assistant messages only)
+  toolsUsed?: InsightsToolUsage[];
 }
 
 export interface InsightsSession {
@@ -971,12 +1017,19 @@ export interface ElectronAPI {
   // Task operations
   getTasks: (projectId: string) => Promise<IPCResult<Task[]>>;
   createTask: (projectId: string, title: string, description: string, metadata?: TaskMetadata) => Promise<IPCResult<Task>>;
+  deleteTask: (taskId: string) => Promise<IPCResult>;
   startTask: (taskId: string, options?: TaskStartOptions) => void;
   stopTask: (taskId: string) => void;
   submitReview: (taskId: string, approved: boolean, feedback?: string) => Promise<IPCResult>;
   updateTaskStatus: (taskId: string, status: TaskStatus) => Promise<IPCResult>;
   recoverStuckTask: (taskId: string, targetStatus?: TaskStatus) => Promise<IPCResult<TaskRecoveryResult>>;
   checkTaskRunning: (taskId: string) => Promise<IPCResult<boolean>>;
+
+  // Workspace management (for human review)
+  getWorktreeStatus: (taskId: string) => Promise<IPCResult<WorktreeStatus>>;
+  getWorktreeDiff: (taskId: string) => Promise<IPCResult<WorktreeDiff>>;
+  mergeWorktree: (taskId: string) => Promise<IPCResult<WorktreeMergeResult>>;
+  discardWorktree: (taskId: string) => Promise<IPCResult<WorktreeDiscardResult>>;
 
   // Event listeners
   onTaskProgress: (callback: (taskId: string, plan: ImplementationPlan) => void) => () => void;

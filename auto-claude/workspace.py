@@ -98,6 +98,7 @@ def choose_workspace(
     spec_name: str,
     force_isolated: bool = False,
     force_direct: bool = False,
+    auto_continue: bool = False,
 ) -> WorkspaceMode:
     """
     Let user choose where auto-claude should work.
@@ -109,6 +110,7 @@ def choose_workspace(
         spec_name: Name of the spec being built
         force_isolated: Skip prompts and use isolated mode
         force_direct: Skip prompts and use direct mode
+        auto_continue: Non-interactive mode (for UI integration) - skip all prompts
 
     Returns:
         WorkspaceMode indicating where to work
@@ -118,6 +120,11 @@ def choose_workspace(
         return WorkspaceMode.ISOLATED
     if force_direct:
         return WorkspaceMode.DIRECT
+
+    # Non-interactive mode: default to isolated for safety
+    if auto_continue:
+        print("Auto-continue: Using isolated workspace for safety.")
+        return WorkspaceMode.ISOLATED
 
     # Check for unsaved work
     has_unsaved = has_uncommitted_changes(project_dir)
@@ -203,8 +210,9 @@ def copy_spec_to_worktree(
         Path to the spec directory inside the worktree
     """
     # Determine target location inside worktree
-    # Use auto-claude/specs/{spec_name}/ as the standard location
-    target_spec_dir = worktree_path / "auto-claude" / "specs" / spec_name
+    # Use .auto-claude/specs/{spec_name}/ as the standard location
+    # Note: auto-claude/ is source code, .auto-claude/ is the installed instance
+    target_spec_dir = worktree_path / ".auto-claude" / "specs" / spec_name
 
     # Create parent directories if needed
     target_spec_dir.parent.mkdir(parents=True, exist_ok=True)

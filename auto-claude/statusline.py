@@ -50,20 +50,20 @@ from ui import (
 
 
 def find_project_root() -> Path:
-    """Find the project root by looking for .auto-claude-status or auto-claude/."""
+    """Find the project root by looking for .auto-claude or .auto-claude-status."""
     cwd = Path.cwd()
 
-    # Check current directory
-    if (cwd / ".auto-claude-status").exists():
+    # Check current directory - prioritize .auto-claude (installed instance)
+    if (cwd / ".auto-claude").exists():
         return cwd
-    if (cwd / "auto-claude").exists():
+    if (cwd / ".auto-claude-status").exists():
         return cwd
 
     # Walk up to find project root
     for parent in cwd.parents:
-        if (parent / ".auto-claude-status").exists():
+        if (parent / ".auto-claude").exists():
             return parent
-        if (parent / "auto-claude").exists():
+        if (parent / ".auto-claude-status").exists():
             return parent
 
     return cwd

@@ -134,7 +134,9 @@ export class AgentManager extends EventEmitter {
   startSpecCreation(
     taskId: string,
     projectPath: string,
-    taskDescription: string
+    taskDescription: string,
+    specDir?: string,  // Optional spec directory (when task already has a directory created by UI)
+    devMode: boolean = false  // Dev mode: use dev/auto-claude/specs/ for framework development
   ): void {
     // Use source auto-claude path (the repo), not the project's auto-claude
     const autoBuildSource = this.getAutoBuildSourcePath();
@@ -157,6 +159,16 @@ export class AgentManager extends EventEmitter {
     // spec_runner.py will auto-start run.py after spec creation completes
     const args = [specRunnerPath, '--task', taskDescription, '--project-dir', projectPath];
 
+    // Pass spec directory if provided (for UI-created tasks that already have a directory)
+    if (specDir) {
+      args.push('--spec-dir', specDir);
+    }
+
+    // Pass --dev flag for framework development mode
+    if (devMode) {
+      args.push('--dev');
+    }
+
     // Note: This is spec-creation but it chains to task-execution via run.py
     // So we treat the whole thing as task-execution for status purposes
     this.spawnProcess(taskId, autoBuildSource, args, autoBuildEnv, 'task-execution');
@@ -169,7 +181,7 @@ export class AgentManager extends EventEmitter {
     taskId: string,
     projectPath: string,
     specId: string,
-    options: { parallel?: boolean; workers?: number } = {}
+    options: { parallel?: boolean; workers?: number; devMode?: boolean } = {}
   ): void {
     console.log('[AgentManager] startTaskExecution called for:', taskId, specId);
     // Use source auto-claude path (the repo), not the project's auto-claude
@@ -195,8 +207,16 @@ export class AgentManager extends EventEmitter {
 
     const args = [runPath, '--spec', specId, '--project-dir', projectPath];
 
+    // Always use auto-continue when running from UI (non-interactive)
+    args.push('--auto-continue');
+
     if (options.parallel && options.workers) {
       args.push('--parallel', options.workers.toString());
+    }
+
+    // Pass --dev flag for framework development mode
+    if (options.devMode) {
+      args.push('--dev');
     }
 
     console.log('[AgentManager] Spawning process with args:', args);
@@ -209,7 +229,8 @@ export class AgentManager extends EventEmitter {
   startQAProcess(
     taskId: string,
     projectPath: string,
-    specId: string
+    specId: string,
+    devMode: boolean = false
   ): void {
     // Use source auto-claude path (the repo), not the project's auto-claude
     const autoBuildSource = this.getAutoBuildSourcePath();
@@ -230,6 +251,11 @@ export class AgentManager extends EventEmitter {
     const autoBuildEnv = this.loadAutoBuildEnv();
 
     const args = [runPath, '--spec', specId, '--project-dir', projectPath, '--qa'];
+
+    // Pass --dev flag for framework development mode
+    if (devMode) {
+      args.push('--dev');
+    }
 
     this.spawnProcess(taskId, autoBuildSource, args, autoBuildEnv, 'qa-process');
   }

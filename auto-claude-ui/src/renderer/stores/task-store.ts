@@ -72,7 +72,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         );
 
         // Determine status based on chunks
-        const allCompleted = chunks.every((c) => c.status === 'completed');
+        // Note: chunks.every() returns true for empty arrays, so we must check length > 0
+        const allCompleted = chunks.length > 0 && chunks.every((c) => c.status === 'completed');
         const anyInProgress = chunks.some((c) => c.status === 'in_progress');
         const anyFailed = chunks.some((c) => c.status === 'failed');
 
@@ -296,6 +297,40 @@ export async function recoverStuckTask(
     return {
       success: false,
       message: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+/**
+ * Delete a task and its spec directory
+ */
+export async function deleteTask(
+  taskId: string
+): Promise<{ success: boolean; error?: string }> {
+  const store = useTaskStore.getState();
+
+  try {
+    const result = await window.electronAPI.deleteTask(taskId);
+
+    if (result.success) {
+      // Remove from local state
+      store.setTasks(store.tasks.filter(t => t.id !== taskId && t.specId !== taskId));
+      // Clear selection if this task was selected
+      if (store.selectedTaskId === taskId) {
+        store.selectTask(null);
+      }
+      return { success: true };
+    }
+
+    return {
+      success: false,
+      error: result.error || 'Failed to delete task'
+    };
+  } catch (error) {
+    console.error('Error deleting task:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
     };
   }
 }

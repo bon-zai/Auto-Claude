@@ -660,8 +660,9 @@ Before your context fills up:
 
 1. **Commit all work**
 2. **Ensure implementation_plan.json is complete**
-3. **Push to remote**: `git push -u origin auto-claude/[feature-name]`
-4. **Leave clean state** - no broken code
+3. **Leave clean state** - no broken code
+
+**NOTE**: Do NOT push to remote. All work stays local until user reviews and approves.
 
 The next agent will:
 1. Read `implementation_plan.json` for chunk list

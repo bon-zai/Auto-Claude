@@ -92,36 +92,24 @@ from debug import (
 MAX_RETRIES = 3
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Dev specs directory (--dev mode) - gitignored, for developing auto-claude itself
-DEV_SPECS_DIR = Path(__file__).parent.parent / "dev" / "auto-claude" / "specs"
-
 
 def get_specs_dir(project_dir: Path, dev_mode: bool = False) -> Path:
-    """Get the specs directory based on project and mode.
+    """Get the specs directory path.
+
+    IMPORTANT: Only .auto-claude/ is considered an "installed" auto-claude.
+    The auto-claude/ folder (if it exists) is SOURCE CODE being developed,
+    not an installation. This allows Auto Claude to be used to develop itself.
 
     Args:
         project_dir: The project root directory
-        dev_mode: If True, use dev/auto-claude/specs/ for framework development
+        dev_mode: Deprecated, kept for API compatibility. Has no effect.
 
     Returns:
-        Path to the specs directory within the project
+        Path to the specs directory within .auto-claude/
     """
-    if dev_mode:
-        return DEV_SPECS_DIR
-
-    # Check for .auto-claude first (hidden folder for external projects)
-    hidden_auto_claude = project_dir / ".auto-claude"
-    if hidden_auto_claude.exists():
-        return hidden_auto_claude / "specs"
-
-    # Then check for auto-claude (visible folder)
-    visible_auto_claude = project_dir / "auto-claude"
-    if visible_auto_claude.exists():
-        return visible_auto_claude / "specs"
-
-    # Default to creating .auto-claude for external projects
-    # (auto-claude is typically only used when the project IS auto-claude itself)
-    return hidden_auto_claude / "specs"
+    # Always use .auto-claude/specs - this is the installed instance
+    # The auto-claude/ folder is source code, not an installation
+    return project_dir / ".auto-claude" / "specs"
 
 
 class Complexity(Enum):
@@ -384,6 +372,7 @@ class SpecOrchestrator:
         project_dir: Path,
         task_description: Optional[str] = None,
         spec_name: Optional[str] = None,
+        spec_dir: Optional[Path] = None,  # Use existing spec directory (for UI integration)
         model: str = "claude-opus-4-5-20251101",
         complexity_override: Optional[str] = None,  # Force a specific complexity
         use_ai_assessment: bool = True,  # Use AI for complexity assessment (vs heuristics)
@@ -402,8 +391,11 @@ class SpecOrchestrator:
         # Complexity assessment (populated during run)
         self.assessment: Optional[ComplexityAssessment] = None
 
-        # Create spec directory
-        if spec_name:
+        # Create/use spec directory
+        if spec_dir:
+            # Use provided spec directory (from UI)
+            self.spec_dir = Path(spec_dir)
+        elif spec_name:
             self.spec_dir = self.specs_dir / spec_name
         else:
             self.spec_dir = self._create_spec_dir()
@@ -1686,6 +1678,11 @@ Examples:
         action="store_true",
         help="Don't automatically start the build after spec creation (default: auto-start build)",
     )
+    parser.add_argument(
+        "--spec-dir",
+        type=Path,
+        help="Use existing spec directory instead of creating a new one (for UI integration)",
+    )
 
     args = parser.parse_args()
 
@@ -1711,33 +1708,27 @@ Examples:
     # Find project root (look for auto-claude folder)
     project_dir = args.project_dir
 
-    # Auto-detect if running from within auto-claude directory
-    # Handle both: auto-claude/ and dev/auto-claude/
+    # Auto-detect if running from within auto-claude directory (the source code)
     if project_dir.name == "auto-claude" and (project_dir / "run.py").exists():
-        parent = project_dir.parent
-        # Check if we're in dev/auto-claude (parent is 'dev')
-        if parent.name == "dev" and (parent.parent / "auto-claude" / "run.py").exists():
-            # Running from dev/auto-claude, go up 2 levels
-            project_dir = parent.parent
-        else:
-            # Running from auto-claude, go up 1 level
-            project_dir = parent
-    elif not (project_dir / "auto-claude").exists():
-        # Try parent directories
+        # Running from within auto-claude/ source directory, go up 1 level
+        project_dir = project_dir.parent
+    elif not (project_dir / ".auto-claude").exists():
+        # No .auto-claude folder found - try to find project root
+        # First check for .auto-claude (installed instance)
         for parent in project_dir.parents:
-            if (parent / "auto-claude").exists():
+            if (parent / ".auto-claude").exists():
                 project_dir = parent
                 break
 
-    # Show dev mode warning
+    # Note: --dev flag is deprecated but kept for API compatibility
     if args.dev:
-        print(f"\n{icon(Icons.GEAR)} DEV MODE: Specs will be saved to dev/auto-claude/specs/ (gitignored)")
-        print(f"  Code changes can target the entire project root\n")
+        print(f"\n{icon(Icons.GEAR)} Note: --dev flag is deprecated. All specs now go to .auto-claude/specs/\n")
 
     orchestrator = SpecOrchestrator(
         project_dir=project_dir,
         task_description=task_description,
         spec_name=args.continue_spec,
+        spec_dir=args.spec_dir,
         model=args.model,
         complexity_override=args.complexity,
         use_ai_assessment=not args.no_ai_assessment,
@@ -1762,6 +1753,8 @@ Examples:
                 sys.executable,
                 str(run_script),
                 "--spec", orchestrator.spec_dir.name,
+                "--project-dir", str(orchestrator.project_dir),
+                "--auto-continue",  # Non-interactive mode for chained execution
             ]
 
             # Pass through dev mode

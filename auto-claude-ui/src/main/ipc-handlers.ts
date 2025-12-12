@@ -2,7 +2,7 @@ import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import path from 'path';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from 'fs';
 import { spawn } from 'child_process';
-import { IPC_CHANNELS, DEFAULT_APP_SETTINGS, AUTO_BUILD_PATHS } from '../shared/constants';
+import { IPC_CHANNELS, DEFAULT_APP_SETTINGS, AUTO_BUILD_PATHS, getSpecsDir } from '../shared/constants';
 import type {
   Project,
   ProjectSettings,
@@ -325,8 +325,10 @@ export function setupIpcHandlers(
       }
 
       // Generate a unique spec ID based on existing specs
-      const autoBuildDir = project.autoBuildPath || 'auto-claude';
-      const specsDir = path.join(project.path, autoBuildDir, 'specs');
+      // Use devMode-aware path for specs directory
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+      const specsDir = path.join(project.path, specsBaseDir);
 
       // Find next available spec number
       let specNumber = 1;
@@ -405,6 +407,56 @@ export function setupIpcHandlers(
     }
   );
 
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_DELETE,
+    async (_, taskId: string): Promise<IPCResult> => {
+      const { rm } = await import('fs/promises');
+
+      // Find task and project
+      const projects = projectStore.getProjects();
+      let task: Task | undefined;
+      let project: Project | undefined;
+
+      for (const p of projects) {
+        const tasks = projectStore.getTasks(p.id);
+        task = tasks.find((t) => t.id === taskId || t.specId === taskId);
+        if (task) {
+          project = p;
+          break;
+        }
+      }
+
+      if (!task || !project) {
+        return { success: false, error: 'Task or project not found' };
+      }
+
+      // Check if task is currently running
+      const isRunning = agentManager.isRunning(taskId);
+      if (isRunning) {
+        return { success: false, error: 'Cannot delete a running task. Stop the task first.' };
+      }
+
+      // Delete the spec directory - use devMode-aware path
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+      const specDir = path.join(project.path, specsBaseDir, task.specId);
+
+      try {
+        if (existsSync(specDir)) {
+          await rm(specDir, { recursive: true, force: true });
+          console.log(`[TASK_DELETE] Deleted spec directory: ${specDir}`);
+        }
+        return { success: true };
+      } catch (error) {
+        console.error('[TASK_DELETE] Error deleting spec directory:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to delete task files'
+        };
+      }
+    }
+  );
+
   ipcMain.on(
     IPC_CHANNELS.TASK_START,
     (_, taskId: string, options?: TaskStartOptions) => {
@@ -441,12 +493,16 @@ export function setupIpcHandlers(
 
       console.log('[TASK_START] Found task:', task.specId, 'status:', task.status, 'chunks:', task.chunks.length);
 
+      // Check if dev mode is enabled for this project
+      const devMode = project.settings.devMode ?? false;
+      console.log('[TASK_START] Dev mode:', devMode);
+
       // Start file watcher for this task
-      const autoBuildDir = project.autoBuildPath || 'auto-claude';
+      // Use getSpecsDir helper to get correct path based on dev mode
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
       const specDir = path.join(
         project.path,
-        autoBuildDir,
-        'specs',
+        specsBaseDir,
         task.specId
       );
       fileWatcher.watch(taskId, specDir);
@@ -465,10 +521,11 @@ export function setupIpcHandlers(
       if (needsSpecCreation) {
         // No spec file - need to run spec_runner.py to create the spec
         const taskDescription = task.description || task.title;
-        console.log('[TASK_START] Starting spec creation for:', task.specId);
+        console.log('[TASK_START] Starting spec creation for:', task.specId, 'in:', specDir);
 
-        // Start spec creation process
-        agentManager.startSpecCreation(task.specId, project.path, taskDescription);
+        // Start spec creation process - pass the existing spec directory
+        // so spec_runner uses it instead of creating a new one
+        agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDir, devMode);
       } else if (needsImplementation) {
         // Spec exists but no chunks - run run.py to create implementation plan and execute
         // Read the spec.md to get the task description
@@ -481,25 +538,43 @@ export function setupIpcHandlers(
 
         console.log('[TASK_START] Starting task execution (no chunks) for:', task.specId);
         // Start task execution which will create the implementation plan
+        // Note: No parallel mode for planning phase - parallel only makes sense with multiple chunks
         agentManager.startTaskExecution(
           taskId,
           project.path,
           task.specId,
           {
-            parallel: options?.parallel ?? project.settings.parallelEnabled,
-            workers: options?.workers ?? project.settings.maxWorkers
+            parallel: false,  // Sequential for planning phase
+            workers: 1,
+            devMode
           }
         );
       } else {
         // Task has chunks, start normal execution
+        // Only enable parallel if there are multiple chunks AND user has parallel enabled
+        const hasMultipleChunks = task.chunks.length > 1;
+        const pendingChunks = task.chunks.filter(c => c.status === 'pending' || c.status === 'in_progress').length;
+        const parallelEnabled = options?.parallel ?? project.settings.parallelEnabled;
+        const useParallel = parallelEnabled && hasMultipleChunks && pendingChunks > 1;
+        const workers = useParallel ? (options?.workers ?? project.settings.maxWorkers) : 1;
+
         console.log('[TASK_START] Starting task execution (has chunks) for:', task.specId);
+        console.log('[TASK_START] Parallel decision:', {
+          hasMultipleChunks,
+          pendingChunks,
+          parallelEnabled,
+          useParallel,
+          workers
+        });
+
         agentManager.startTaskExecution(
           taskId,
           project.path,
           task.specId,
           {
-            parallel: options?.parallel ?? project.settings.parallelEnabled,
-            workers: options?.workers ?? project.settings.maxWorkers
+            parallel: useParallel,
+            workers,
+            devMode
           }
         );
       }
@@ -553,9 +628,12 @@ export function setupIpcHandlers(
         return { success: false, error: 'Task not found' };
       }
 
+      // Check if dev mode is enabled for this project
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
       const specDir = path.join(
         project.path,
-        AUTO_BUILD_PATHS.SPECS_DIR,
+        specsBaseDir,
         task.specId
       );
 
@@ -583,8 +661,8 @@ export function setupIpcHandlers(
           `# QA Fix Request\n\nStatus: REJECTED\n\n## Feedback\n\n${feedback || 'No feedback provided'}\n\nCreated at: ${new Date().toISOString()}\n`
         );
 
-        // Restart QA process
-        agentManager.startQAProcess(taskId, project.path, task.specId);
+        // Restart QA process with dev mode
+        agentManager.startQAProcess(taskId, project.path, task.specId, devMode);
 
         const mainWindow = getMainWindow();
         if (mainWindow) {
@@ -625,12 +703,12 @@ export function setupIpcHandlers(
         return { success: false, error: 'Task not found' };
       }
 
-      // Get the spec directory - check both .auto-claude and auto-claude
-      const autoBuildDir = project.autoBuildPath || 'auto-claude';
+      // Get the spec directory - use devMode-aware path
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
       const specDir = path.join(
         project.path,
-        autoBuildDir,
-        'specs',
+        specsBaseDir,
         task.specId
       );
 
@@ -675,6 +753,71 @@ export function setupIpcHandlers(
           }
 
           writeFileSync(planPath, JSON.stringify(plan, null, 2));
+        }
+
+        // Auto-start task when status changes to 'in_progress' and no process is running
+        if (status === 'in_progress' && !agentManager.isRunning(taskId)) {
+          const mainWindow = getMainWindow();
+          console.log('[TASK_UPDATE_STATUS] Auto-starting task:', taskId);
+
+          // Start file watcher for this task
+          fileWatcher.watch(taskId, specDir);
+
+          // Check if spec.md exists
+          const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
+          const hasSpec = existsSync(specFilePath);
+          const needsSpecCreation = !hasSpec;
+          const needsImplementation = hasSpec && task.chunks.length === 0;
+
+          console.log('[TASK_UPDATE_STATUS] hasSpec:', hasSpec, 'needsSpecCreation:', needsSpecCreation, 'needsImplementation:', needsImplementation);
+
+          if (needsSpecCreation) {
+            // No spec file - need to run spec_runner.py to create the spec
+            const taskDescription = task.description || task.title;
+            console.log('[TASK_UPDATE_STATUS] Starting spec creation for:', task.specId);
+            agentManager.startSpecCreation(task.specId, project.path, taskDescription, specDir, devMode);
+          } else if (needsImplementation) {
+            // Spec exists but no chunks - run run.py to create implementation plan and execute
+            console.log('[TASK_UPDATE_STATUS] Starting task execution (no chunks) for:', task.specId);
+            agentManager.startTaskExecution(
+              taskId,
+              project.path,
+              task.specId,
+              {
+                parallel: false,
+                workers: 1,
+                devMode
+              }
+            );
+          } else {
+            // Task has chunks, start normal execution
+            const hasMultipleChunks = task.chunks.length > 1;
+            const pendingChunks = task.chunks.filter(c => c.status === 'pending' || c.status === 'in_progress').length;
+            const parallelEnabled = project.settings.parallelEnabled;
+            const useParallel = parallelEnabled && hasMultipleChunks && pendingChunks > 1;
+            const workers = useParallel ? project.settings.maxWorkers : 1;
+
+            console.log('[TASK_UPDATE_STATUS] Starting task execution (has chunks) for:', task.specId);
+            agentManager.startTaskExecution(
+              taskId,
+              project.path,
+              task.specId,
+              {
+                parallel: useParallel,
+                workers,
+                devMode
+              }
+            );
+          }
+
+          // Notify renderer about status change
+          if (mainWindow) {
+            mainWindow.webContents.send(
+              IPC_CHANNELS.TASK_STATUS_CHANGE,
+              taskId,
+              'in_progress'
+            );
+          }
         }
 
         return { success: true };
@@ -739,10 +882,6 @@ export function setupIpcHandlers(
         return { success: false, error: 'Task not found' };
       }
 
-      // Determine the target status - default to 'backlog' if not specified
-      // If task had some chunks completed, maybe we should go to 'human_review'
-      const newStatus: TaskStatus = targetStatus || 'backlog';
-
       // Get the spec directory
       const autoBuildDir = project.autoBuildPath || 'auto-claude';
       const specDir = path.join(
@@ -756,10 +895,43 @@ export function setupIpcHandlers(
       const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
 
       try {
+        // Read the plan to analyze chunk progress
+        let plan: Record<string, unknown> | null = null;
         if (existsSync(planPath)) {
           const planContent = readFileSync(planPath, 'utf-8');
-          const plan = JSON.parse(planContent);
+          plan = JSON.parse(planContent);
+        }
 
+        // Determine the target status intelligently based on chunk progress
+        // If targetStatus is explicitly provided, use it; otherwise calculate from chunks
+        let newStatus: TaskStatus = targetStatus || 'backlog';
+
+        if (!targetStatus && plan?.phases && Array.isArray(plan.phases)) {
+          // Analyze chunk statuses to determine appropriate recovery status
+          const allChunks: Array<{ status: string }> = [];
+          for (const phase of plan.phases as Array<{ chunks?: Array<{ status: string }> }>) {
+            if (phase.chunks && Array.isArray(phase.chunks)) {
+              allChunks.push(...phase.chunks);
+            }
+          }
+
+          if (allChunks.length > 0) {
+            const completedCount = allChunks.filter(c => c.status === 'completed').length;
+            const allCompleted = completedCount === allChunks.length;
+
+            if (allCompleted) {
+              // All chunks completed - should go to review (ai_review or human_review based on source)
+              // For recovery, human_review is safer as it requires manual verification
+              newStatus = 'human_review';
+            } else if (completedCount > 0) {
+              // Some chunks completed, some still pending - task is in progress
+              newStatus = 'in_progress';
+            }
+            // else: no chunks completed, stay with 'backlog'
+          }
+        }
+
+        if (plan) {
           // Update status
           plan.status = newStatus;
           plan.planStatus = newStatus === 'done' ? 'completed'
@@ -772,20 +944,28 @@ export function setupIpcHandlers(
           // Add recovery note
           plan.recoveryNote = `Task recovered from stuck state at ${new Date().toISOString()}`;
 
-          // Reset all chunk statuses to 'pending' so the task can be restarted
-          // This allows run.py to pick up from where it left off or restart
+          // Reset in_progress and failed chunk statuses to 'pending' so they can be retried
+          // Keep completed chunks as-is so run.py can resume from where it left off
           if (plan.phases && Array.isArray(plan.phases)) {
-            for (const phase of plan.phases) {
+            for (const phase of plan.phases as Array<{ chunks?: Array<{ status: string; actual_output?: string; started_at?: string; completed_at?: string }> }>) {
               if (phase.chunks && Array.isArray(phase.chunks)) {
                 for (const chunk of phase.chunks) {
                   // Reset in_progress chunks to pending (they were interrupted)
                   // Keep completed chunks as-is so run.py can resume
                   if (chunk.status === 'in_progress') {
                     chunk.status = 'pending';
+                    // Clear execution data to maintain consistency
+                    delete chunk.actual_output;
+                    delete chunk.started_at;
+                    delete chunk.completed_at;
                   }
                   // Also reset failed chunks so they can be retried
                   if (chunk.status === 'failed') {
                     chunk.status = 'pending';
+                    // Clear execution data to maintain consistency
+                    delete chunk.actual_output;
+                    delete chunk.started_at;
+                    delete chunk.completed_at;
                   }
                 }
               }
@@ -822,6 +1002,411 @@ export function setupIpcHandlers(
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to recover task'
+        };
+      }
+    }
+  );
+
+  // ============================================
+  // Workspace Management Operations (for human review)
+  // ============================================
+
+  /**
+   * Helper function to find task and project by taskId
+   */
+  const findTaskAndProject = (taskId: string): { task: Task | undefined; project: Project | undefined } => {
+    const projects = projectStore.getProjects();
+    let task: Task | undefined;
+    let project: Project | undefined;
+
+    for (const p of projects) {
+      const tasks = projectStore.getTasks(p.id);
+      task = tasks.find((t) => t.id === taskId || t.specId === taskId);
+      if (task) {
+        project = p;
+        break;
+      }
+    }
+
+    return { task, project };
+  };
+
+  /**
+   * Get the worktree status for a task
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_WORKTREE_STATUS,
+    async (_, taskId: string): Promise<IPCResult<import('../shared/types').WorktreeStatus>> => {
+      try {
+        const { task, project } = findTaskAndProject(taskId);
+        if (!task || !project) {
+          return { success: false, error: 'Task not found' };
+        }
+
+        const worktreePath = path.join(project.path, '.worktrees', 'auto-claude-staging');
+
+        if (!existsSync(worktreePath)) {
+          return {
+            success: true,
+            data: { exists: false }
+          };
+        }
+
+        // Get branch info from git
+        const { execSync } = require('child_process');
+
+        try {
+          // Get current branch in worktree
+          const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+            cwd: worktreePath,
+            encoding: 'utf-8'
+          }).trim();
+
+          // Get base branch (usually main or master)
+          let baseBranch = 'main';
+          try {
+            // Try to get the default branch
+            baseBranch = execSync('git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo main', {
+              cwd: project.path,
+              encoding: 'utf-8'
+            }).trim().replace('origin/', '');
+          } catch {
+            baseBranch = 'main';
+          }
+
+          // Get commit count
+          let commitCount = 0;
+          try {
+            const countOutput = execSync(`git rev-list --count ${baseBranch}..HEAD 2>/dev/null || echo 0`, {
+              cwd: worktreePath,
+              encoding: 'utf-8'
+            }).trim();
+            commitCount = parseInt(countOutput, 10) || 0;
+          } catch {
+            commitCount = 0;
+          }
+
+          // Get diff stats
+          let filesChanged = 0;
+          let additions = 0;
+          let deletions = 0;
+
+          try {
+            const diffStat = execSync(`git diff --stat ${baseBranch}...HEAD 2>/dev/null || echo ""`, {
+              cwd: worktreePath,
+              encoding: 'utf-8'
+            }).trim();
+
+            // Parse the summary line (e.g., "3 files changed, 50 insertions(+), 10 deletions(-)")
+            const summaryMatch = diffStat.match(/(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/);
+            if (summaryMatch) {
+              filesChanged = parseInt(summaryMatch[1], 10) || 0;
+              additions = parseInt(summaryMatch[2], 10) || 0;
+              deletions = parseInt(summaryMatch[3], 10) || 0;
+            }
+          } catch {
+            // Ignore diff errors
+          }
+
+          return {
+            success: true,
+            data: {
+              exists: true,
+              worktreePath,
+              branch,
+              baseBranch,
+              commitCount,
+              filesChanged,
+              additions,
+              deletions
+            }
+          };
+        } catch (gitError) {
+          console.error('Git error getting worktree status:', gitError);
+          return {
+            success: true,
+            data: { exists: true, worktreePath }
+          };
+        }
+      } catch (error) {
+        console.error('Failed to get worktree status:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get worktree status'
+        };
+      }
+    }
+  );
+
+  /**
+   * Get the diff for a task's worktree
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_WORKTREE_DIFF,
+    async (_, taskId: string): Promise<IPCResult<import('../shared/types').WorktreeDiff>> => {
+      try {
+        const { task, project } = findTaskAndProject(taskId);
+        if (!task || !project) {
+          return { success: false, error: 'Task not found' };
+        }
+
+        const worktreePath = path.join(project.path, '.worktrees', 'auto-claude-staging');
+
+        if (!existsSync(worktreePath)) {
+          return { success: false, error: 'No worktree found for this task' };
+        }
+
+        const { execSync } = require('child_process');
+
+        // Get base branch
+        let baseBranch = 'main';
+        try {
+          baseBranch = execSync('git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || echo main', {
+            cwd: project.path,
+            encoding: 'utf-8'
+          }).trim().replace('origin/', '');
+        } catch {
+          baseBranch = 'main';
+        }
+
+        // Get the diff with file stats
+        const files: import('../shared/types').WorktreeDiffFile[] = [];
+
+        try {
+          // Get numstat for additions/deletions per file
+          const numstat = execSync(`git diff --numstat ${baseBranch}...HEAD 2>/dev/null || echo ""`, {
+            cwd: worktreePath,
+            encoding: 'utf-8'
+          }).trim();
+
+          // Get name-status for file status
+          const nameStatus = execSync(`git diff --name-status ${baseBranch}...HEAD 2>/dev/null || echo ""`, {
+            cwd: worktreePath,
+            encoding: 'utf-8'
+          }).trim();
+
+          // Parse name-status to get file statuses
+          const statusMap: Record<string, 'added' | 'modified' | 'deleted' | 'renamed'> = {};
+          nameStatus.split('\n').filter(Boolean).forEach(line => {
+            const [status, ...pathParts] = line.split('\t');
+            const filePath = pathParts.join('\t'); // Handle files with tabs in name
+            switch (status[0]) {
+              case 'A': statusMap[filePath] = 'added'; break;
+              case 'M': statusMap[filePath] = 'modified'; break;
+              case 'D': statusMap[filePath] = 'deleted'; break;
+              case 'R': statusMap[pathParts[1] || filePath] = 'renamed'; break;
+              default: statusMap[filePath] = 'modified';
+            }
+          });
+
+          // Parse numstat for additions/deletions
+          numstat.split('\n').filter(Boolean).forEach(line => {
+            const [adds, dels, filePath] = line.split('\t');
+            files.push({
+              path: filePath,
+              status: statusMap[filePath] || 'modified',
+              additions: parseInt(adds, 10) || 0,
+              deletions: parseInt(dels, 10) || 0
+            });
+          });
+        } catch (diffError) {
+          console.error('Error getting diff:', diffError);
+        }
+
+        // Generate summary
+        const totalAdditions = files.reduce((sum, f) => sum + f.additions, 0);
+        const totalDeletions = files.reduce((sum, f) => sum + f.deletions, 0);
+        const summary = `${files.length} files changed, ${totalAdditions} insertions(+), ${totalDeletions} deletions(-)`;
+
+        return {
+          success: true,
+          data: { files, summary }
+        };
+      } catch (error) {
+        console.error('Failed to get worktree diff:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get worktree diff'
+        };
+      }
+    }
+  );
+
+  /**
+   * Merge the worktree changes into the main branch
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_WORKTREE_MERGE,
+    async (_, taskId: string): Promise<IPCResult<import('../shared/types').WorktreeMergeResult>> => {
+      try {
+        const { task, project } = findTaskAndProject(taskId);
+        if (!task || !project) {
+          return { success: false, error: 'Task not found' };
+        }
+
+        // Use run.py --merge to handle the merge
+        const sourcePath = getEffectiveSourcePath();
+        if (!sourcePath) {
+          return { success: false, error: 'Auto Claude source not found' };
+        }
+
+        const runScript = path.join(sourcePath, 'run.py');
+        const specDir = path.join(project.path, project.autoBuildPath || '.auto-claude', 'specs', task.specId);
+
+        if (!existsSync(specDir)) {
+          return { success: false, error: 'Spec directory not found' };
+        }
+
+        return new Promise((resolve) => {
+          const mergeProcess = spawn('python3', [
+            runScript,
+            '--spec', task.specId,
+            '--project-dir', project.path,
+            '--merge'
+          ], {
+            cwd: sourcePath,
+            env: {
+              ...process.env,
+              PYTHONUNBUFFERED: '1'
+            }
+          });
+
+          let stdout = '';
+          let stderr = '';
+
+          mergeProcess.stdout.on('data', (data: Buffer) => {
+            stdout += data.toString();
+          });
+
+          mergeProcess.stderr.on('data', (data: Buffer) => {
+            stderr += data.toString();
+          });
+
+          mergeProcess.on('close', (code: number) => {
+            if (code === 0) {
+              // Update task status to done after successful merge
+              projectStore.updateTaskStatus(taskId, 'done');
+
+              const mainWindow = getMainWindow();
+              if (mainWindow) {
+                mainWindow.webContents.send(IPC_CHANNELS.TASK_STATUS_CHANGE, taskId, 'done');
+              }
+
+              resolve({
+                success: true,
+                data: {
+                  success: true,
+                  message: 'Changes merged successfully'
+                }
+              });
+            } else {
+              // Check if there were conflicts
+              const hasConflicts = stdout.includes('conflict') || stderr.includes('conflict');
+
+              resolve({
+                success: true,
+                data: {
+                  success: false,
+                  message: hasConflicts ? 'Merge conflicts detected' : `Merge failed: ${stderr || stdout}`,
+                  conflictFiles: hasConflicts ? [] : undefined
+                }
+              });
+            }
+          });
+
+          mergeProcess.on('error', (err: Error) => {
+            resolve({
+              success: false,
+              error: `Failed to run merge: ${err.message}`
+            });
+          });
+        });
+      } catch (error) {
+        console.error('Failed to merge worktree:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to merge worktree'
+        };
+      }
+    }
+  );
+
+  /**
+   * Discard the worktree changes
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_WORKTREE_DISCARD,
+    async (_, taskId: string): Promise<IPCResult<import('../shared/types').WorktreeDiscardResult>> => {
+      try {
+        const { task, project } = findTaskAndProject(taskId);
+        if (!task || !project) {
+          return { success: false, error: 'Task not found' };
+        }
+
+        const worktreePath = path.join(project.path, '.worktrees', 'auto-claude-staging');
+
+        if (!existsSync(worktreePath)) {
+          return {
+            success: true,
+            data: {
+              success: true,
+              message: 'No worktree to discard'
+            }
+          };
+        }
+
+        const { execSync } = require('child_process');
+
+        try {
+          // Get the branch name before removing
+          const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+            cwd: worktreePath,
+            encoding: 'utf-8'
+          }).trim();
+
+          // Remove the worktree
+          execSync(`git worktree remove --force "${worktreePath}"`, {
+            cwd: project.path,
+            encoding: 'utf-8'
+          });
+
+          // Delete the branch
+          try {
+            execSync(`git branch -D "${branch}"`, {
+              cwd: project.path,
+              encoding: 'utf-8'
+            });
+          } catch {
+            // Branch might already be deleted or not exist
+          }
+
+          // Update task status back to backlog
+          projectStore.updateTaskStatus(taskId, 'backlog');
+
+          const mainWindow = getMainWindow();
+          if (mainWindow) {
+            mainWindow.webContents.send(IPC_CHANNELS.TASK_STATUS_CHANGE, taskId, 'backlog');
+          }
+
+          return {
+            success: true,
+            data: {
+              success: true,
+              message: 'Worktree discarded successfully'
+            }
+          };
+        } catch (gitError) {
+          console.error('Git error discarding worktree:', gitError);
+          return {
+            success: false,
+            error: `Failed to discard worktree: ${gitError instanceof Error ? gitError.message : 'Unknown error'}`
+          };
+        }
+      } catch (error) {
+        console.error('Failed to discard worktree:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to discard worktree'
         };
       }
     }
@@ -1377,8 +1962,10 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join('\n'
           reason: 'Graphiti not configured'
         };
 
-        // Check for graphiti state in specs
-        const specsDir = path.join(project.path, AUTO_BUILD_PATHS.SPECS_DIR);
+        // Check for graphiti state in specs (use devMode-aware path)
+        const devMode = project.settings.devMode ?? false;
+        const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+        const specsDir = path.join(project.path, specsBaseDir);
         if (existsSync(specsDir)) {
           const specDirs = readdirSync(specsDir)
             .filter((f: string) => {
@@ -1720,7 +2307,10 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join('\n'
       const results: ContextSearchResult[] = [];
       const queryLower = query.toLowerCase();
 
-      const specsDir = path.join(project.path, AUTO_BUILD_PATHS.SPECS_DIR);
+      // Use devMode-aware path
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+      const specsDir = path.join(project.path, specsBaseDir);
       if (existsSync(specsDir)) {
         const allSpecDirs = readdirSync(specsDir)
           .filter((f: string) => {
@@ -1768,7 +2358,11 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join('\n'
       }
 
       const memories: MemoryEpisode[] = [];
-      const specsDir = path.join(project.path, AUTO_BUILD_PATHS.SPECS_DIR);
+
+      // Use devMode-aware path
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+      const specsDir = path.join(project.path, specsBaseDir);
 
       if (existsSync(specsDir)) {
         const sortedSpecDirs = readdirSync(specsDir)
@@ -3791,8 +4385,10 @@ ${issue.body || 'No description provided.'}
         }
 
         // Generate spec ID by finding next available number
-        const autoBuildDir = project.autoBuildPath || 'auto-claude';
-        const specsDir = path.join(project.path, autoBuildDir, 'specs');
+        // Use devMode-aware path for specs directory
+        const devMode = project.settings.devMode ?? false;
+        const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+        const specsDir = path.join(project.path, specsBaseDir);
 
         // Ensure specs directory exists
         if (!existsSync(specsDir)) {
@@ -4082,7 +4678,11 @@ ${idea.rationale}
       // Use renderer tasks if provided (they have the correct UI status),
       // otherwise fall back to reading from filesystem
       const tasks = rendererTasks || projectStore.getTasks(projectId);
-      const doneTasks = changelogService.getCompletedTasks(project.path, tasks);
+
+      // Use devMode-aware path for specs
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+      const doneTasks = changelogService.getCompletedTasks(project.path, tasks, specsBaseDir);
 
       return { success: true, data: doneTasks };
     }
@@ -4097,7 +4697,11 @@ ${idea.rationale}
       }
 
       const tasks = projectStore.getTasks(projectId);
-      const specs = await changelogService.loadTaskSpecs(project.path, taskIds, tasks);
+
+      // Use devMode-aware path for specs
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+      const specs = await changelogService.loadTaskSpecs(project.path, taskIds, tasks, specsBaseDir);
 
       return { success: true, data: specs };
     }
@@ -4119,9 +4723,11 @@ ${idea.rationale}
         return;
       }
 
-      // Load specs for selected tasks
+      // Load specs for selected tasks (use devMode-aware path)
       const tasks = projectStore.getTasks(request.projectId);
-      const specs = await changelogService.loadTaskSpecs(project.path, request.taskIds, tasks);
+      const devMode = project.settings.devMode ?? false;
+      const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+      const specs = await changelogService.loadTaskSpecs(project.path, request.taskIds, tasks, specsBaseDir);
 
       // Start generation
       changelogService.generateChangelog(request.projectId, project.path, request, specs);
@@ -4258,8 +4864,10 @@ ${idea.rationale}
 
       try {
         // Generate a unique spec ID based on existing specs
-        const autoBuildDir = project.autoBuildPath || 'auto-claude';
-        const specsDir = path.join(project.path, autoBuildDir, 'specs');
+        // Use devMode-aware path for specs directory
+        const devMode = project.settings.devMode ?? false;
+        const specsBaseDir = getSpecsDir(project.autoBuildPath, devMode);
+        const specsDir = path.join(project.path, specsBaseDir);
 
         // Find next available spec number
         let specNumber = 1;

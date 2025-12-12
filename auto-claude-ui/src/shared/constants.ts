@@ -112,7 +112,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
     onTaskFailed: true,
     onReviewNeeded: true,
     sound: false
-  }
+  },
+  devMode: false
 };
 
 // IPC Channel names
@@ -129,12 +130,19 @@ export const IPC_CHANNELS = {
   // Task operations
   TASK_LIST: 'task:list',
   TASK_CREATE: 'task:create',
+  TASK_DELETE: 'task:delete',
   TASK_START: 'task:start',
   TASK_STOP: 'task:stop',
   TASK_REVIEW: 'task:review',
   TASK_UPDATE_STATUS: 'task:updateStatus',
   TASK_RECOVER_STUCK: 'task:recoverStuck',
   TASK_CHECK_RUNNING: 'task:checkRunning',
+
+  // Workspace management (for human review)
+  TASK_WORKTREE_STATUS: 'task:worktreeStatus',
+  TASK_WORKTREE_DIFF: 'task:worktreeDiff',
+  TASK_WORKTREE_MERGE: 'task:worktreeMerge',
+  TASK_WORKTREE_DISCARD: 'task:worktreeDiscard',
 
   // Task events (main -> renderer)
   TASK_PROGRESS: 'task:progress',
@@ -262,10 +270,11 @@ export const IPC_CHANNELS = {
 } as const;
 
 // File paths relative to project
+// IMPORTANT: All paths use .auto-claude/ (the installed instance), NOT auto-claude/ (source code)
 export const AUTO_BUILD_PATHS = {
-  SPECS_DIR: 'auto-claude/specs',
-  ROADMAP_DIR: 'auto-claude/roadmap',
-  IDEATION_DIR: 'auto-claude/ideation',
+  SPECS_DIR: '.auto-claude/specs',
+  ROADMAP_DIR: '.auto-claude/roadmap',
+  IDEATION_DIR: '.auto-claude/ideation',
   IMPLEMENTATION_PLAN: 'implementation_plan.json',
   SPEC_FILE: 'spec.md',
   QA_REPORT: 'qa_report.md',
@@ -276,9 +285,23 @@ export const AUTO_BUILD_PATHS = {
   ROADMAP_DISCOVERY: 'roadmap_discovery.json',
   IDEATION_FILE: 'ideation.json',
   IDEATION_CONTEXT: 'ideation_context.json',
-  PROJECT_INDEX: 'auto-claude/project_index.json',
+  PROJECT_INDEX: '.auto-claude/project_index.json',
   GRAPHITI_STATE: '.graphiti_state.json'
 } as const;
+
+/**
+ * Get the specs directory path.
+ *
+ * Note: devMode parameter is kept for API compatibility but currently
+ * all specs go to .auto-claude/specs/ (the installed instance).
+ * The auto-claude/ folder is source code and should not contain specs.
+ */
+export function getSpecsDir(autoBuildPath: string | undefined, _devMode: boolean): string {
+  // Always use .auto-claude/specs - this is the installed instance
+  // autoBuildPath should always be '.auto-claude' or undefined (not initialized)
+  const basePath = autoBuildPath || '.auto-claude';
+  return `${basePath}/specs`;
+}
 
 // Roadmap feature priority colors
 export const ROADMAP_PRIORITY_COLORS: Record<string, string> = {

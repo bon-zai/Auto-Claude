@@ -32,6 +32,8 @@ class WorkflowType(str, Enum):
     INVESTIGATION = "investigation"  # Bug hunting (investigate, hypothesize, fix)
     MIGRATION = "migration"       # Data migration (prepare, test, execute, cleanup)
     SIMPLE = "simple"             # Single-service, minimal overhead
+    DEVELOPMENT = "development"   # General development work
+    ENHANCEMENT = "enhancement"   # Improving existing features
 
 
 class PhaseType(str, Enum):
@@ -186,6 +188,9 @@ class Chunk:
         self.status = ChunkStatus.IN_PROGRESS
         self.started_at = datetime.now().isoformat()
         self.session_id = session_id
+        # Clear stale data from previous runs to ensure clean state
+        self.completed_at = None
+        self.actual_output = None
 
     def complete(self, output: Optional[str] = None):
         """Mark chunk as done."""
@@ -197,6 +202,7 @@ class Chunk:
     def fail(self, reason: Optional[str] = None):
         """Mark chunk as failed."""
         self.status = ChunkStatus.FAILED
+        self.completed_at = None  # Clear to maintain consistency (failed != completed)
         if reason:
             self.actual_output = f"FAILED: {reason}"
 
@@ -263,8 +269,16 @@ class ImplementationPlan:
     updated_at: Optional[str] = None
     spec_file: Optional[str] = None
 
+    # Task status (synced with UI)
+    # status: backlog, in_progress, ai_review, human_review, done
+    # planStatus: pending, in_progress, review, completed
+    status: Optional[str] = None
+    planStatus: Optional[str] = None
+    recoveryNote: Optional[str] = None
+    qa_signoff: Optional[dict] = None
+
     def to_dict(self) -> dict:
-        return {
+        result = {
             "feature": self.feature,
             "workflow_type": self.workflow_type.value,
             "services_involved": self.services_involved,
@@ -274,18 +288,41 @@ class ImplementationPlan:
             "updated_at": self.updated_at,
             "spec_file": self.spec_file,
         }
+        # Include status fields if set (synced with UI)
+        if self.status:
+            result["status"] = self.status
+        if self.planStatus:
+            result["planStatus"] = self.planStatus
+        if self.recoveryNote:
+            result["recoveryNote"] = self.recoveryNote
+        if self.qa_signoff:
+            result["qa_signoff"] = self.qa_signoff
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "ImplementationPlan":
+        # Parse workflow_type with fallback for unknown types
+        workflow_type_str = data.get("workflow_type", "feature")
+        try:
+            workflow_type = WorkflowType(workflow_type_str)
+        except ValueError:
+            # Unknown workflow type - default to FEATURE
+            print(f"Warning: Unknown workflow_type '{workflow_type_str}', defaulting to 'feature'")
+            workflow_type = WorkflowType.FEATURE
+
         return cls(
             feature=data["feature"],
-            workflow_type=WorkflowType(data.get("workflow_type", "feature")),
+            workflow_type=workflow_type,
             services_involved=data.get("services_involved", []),
             phases=[Phase.from_dict(p) for p in data.get("phases", [])],
             final_acceptance=data.get("final_acceptance", []),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             spec_file=data.get("spec_file"),
+            status=data.get("status"),
+            planStatus=data.get("planStatus"),
+            recoveryNote=data.get("recoveryNote"),
+            qa_signoff=data.get("qa_signoff"),
         )
 
     def save(self, path: Path):
@@ -294,9 +331,57 @@ class ImplementationPlan:
         if not self.created_at:
             self.created_at = self.updated_at
 
+        # Auto-update status based on chunk completion
+        self.update_status_from_chunks()
+
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
+
+    def update_status_from_chunks(self):
+        """Update overall status and planStatus based on chunk completion state.
+        
+        This syncs the task status with the UI's expected values:
+        - status: backlog, in_progress, ai_review, human_review, done
+        - planStatus: pending, in_progress, review, completed
+        """
+        all_chunks = [c for p in self.phases for c in p.chunks]
+        
+        if not all_chunks:
+            # No chunks yet - stay in backlog/pending
+            if not self.status:
+                self.status = "backlog"
+            if not self.planStatus:
+                self.planStatus = "pending"
+            return
+        
+        completed_count = sum(1 for c in all_chunks if c.status == ChunkStatus.COMPLETED)
+        failed_count = sum(1 for c in all_chunks if c.status == ChunkStatus.FAILED)
+        in_progress_count = sum(1 for c in all_chunks if c.status == ChunkStatus.IN_PROGRESS)
+        total_count = len(all_chunks)
+        
+        # Determine status based on chunk states
+        if completed_count == total_count:
+            # All chunks completed - check if QA approved
+            if self.qa_signoff and self.qa_signoff.get("status") == "approved":
+                self.status = "human_review"
+                self.planStatus = "review"
+            else:
+                # All chunks done, waiting for QA
+                self.status = "ai_review"
+                self.planStatus = "review"
+        elif failed_count > 0:
+            # Some chunks failed - still in progress (needs retry or fix)
+            self.status = "in_progress"
+            self.planStatus = "in_progress"
+        elif in_progress_count > 0 or completed_count > 0:
+            # Some chunks in progress or completed
+            self.status = "in_progress"
+            self.planStatus = "in_progress"
+        else:
+            # All chunks pending - backlog
+            self.status = "backlog"
+            self.planStatus = "pending"
 
     @classmethod
     def load(cls, path: Path) -> "ImplementationPlan":

@@ -114,21 +114,27 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
   return (
     <Card
       className={cn(
-        'card-surface card-interactive cursor-pointer',
-        isRunning && 'ring-2 ring-primary border-primary'
+        'card-surface task-card-enhanced cursor-pointer',
+        isRunning && !isStuck && 'ring-2 ring-primary border-primary task-running-pulse',
+        isStuck && 'ring-2 ring-warning border-warning task-stuck-pulse'
       )}
       onClick={onClick}
     >
       <CardContent className="p-4">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="font-medium text-sm text-foreground line-clamp-2">{task.title}</h3>
-          <div className="flex items-center gap-1.5 shrink-0">
-            {/* Stuck indicator */}
+        {/* Header - improved visual hierarchy */}
+        <div className="flex items-start justify-between gap-3">
+          <h3
+            className="font-semibold text-sm text-foreground line-clamp-2 leading-snug flex-1 min-w-0"
+            title={task.title}
+          >
+            {task.title}
+          </h3>
+          <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end max-w-[140px]">
+            {/* Stuck indicator - highest priority */}
             {isStuck && (
               <Badge
                 variant="outline"
-                className="text-[10px] px-1.5 py-0 flex items-center gap-1 bg-warning/10 text-warning border-warning/30"
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-warning/10 text-warning border-warning/30 badge-priority-urgent"
               >
                 <AlertTriangle className="h-2.5 w-2.5" />
                 Stuck
@@ -139,7 +145,7 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
               <Badge
                 variant="outline"
                 className={cn(
-                  'text-[10px] px-1.5 py-0 flex items-center gap-1',
+                  'text-[10px] px-1.5 py-0.5 flex items-center gap-1',
                   EXECUTION_PHASE_BADGE_COLORS[executionPhase]
                 )}
               >
@@ -147,7 +153,10 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
                 {EXECUTION_PHASE_LABELS[executionPhase]}
               </Badge>
             )}
-            <Badge variant={isStuck ? 'warning' : getStatusBadgeVariant(task.status)}>
+            <Badge
+              variant={isStuck ? 'warning' : getStatusBadgeVariant(task.status)}
+              className="text-[10px] px-1.5 py-0.5"
+            >
               {isStuck ? 'Needs Recovery' : getStatusLabel(task.status)}
             </Badge>
           </div>
@@ -235,24 +244,26 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
             <Progress
               value={hasActiveExecution ? (task.executionProgress?.overallProgress || 0) : progress}
               className="h-1.5"
+              animated={isRunning || task.status === 'ai_review'}
             />
 
-            {/* Chunk indicators - only show when chunks exist */}
+            {/* Chunk indicators - enhanced with tooltips and animation */}
             {task.chunks.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {task.chunks.slice(0, 8).map((chunk) => (
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {task.chunks.slice(0, 10).map((chunk) => (
                   <div
                     key={chunk.id}
                     className={cn(
-                      'h-1.5 w-1.5 rounded-full',
-                      CHUNK_STATUS_COLORS[chunk.status]
+                      'h-2 w-2 rounded-full chunk-dot',
+                      CHUNK_STATUS_COLORS[chunk.status],
+                      chunk.status === 'in_progress' && 'chunk-dot-active'
                     )}
-                    title={`${chunk.title}: ${chunk.status}`}
+                    title={`${chunk.title || chunk.id}: ${chunk.status}`}
                   />
                 ))}
-                {task.chunks.length > 8 && (
-                  <span className="text-xs text-muted-foreground">
-                    +{task.chunks.length - 8}
+                {task.chunks.length > 10 && (
+                  <span className="text-[10px] text-muted-foreground font-medium ml-0.5">
+                    +{task.chunks.length - 10}
                   </span>
                 )}
               </div>

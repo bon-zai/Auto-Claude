@@ -71,3 +71,5 @@ dmypy.json
 
 # Development of Auto Build with Auto Build
 dev/
+
+.auto-claude/

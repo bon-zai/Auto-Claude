@@ -1,25 +1,25 @@
 {
   "active": true,
-  "spec": "005-auto-electron-product-requirements",
+  "spec": "004-improve-ux-ui-for-kanban-tasks",
   "state": "complete",
   "chunks": {
-    "completed": 5,
+    "completed": 1,
     "total": 5,
     "in_progress": 0,
     "failed": 0
   },
   "phase": {
-    "current": "Polish",
-    "id": 4,
-    "total": 2
+    "current": "",
+    "id": 0,
+    "total": 0
   },
   "workers": {
     "active": 0,
-    "max": 1
+    "max": 4
   },
   "session": {
-    "number": 5,
-    "started_at": "2025-12-11T11:10:36.896177"
+    "number": 0,
+    "started_at": "2025-12-12T13:34:07.312351"
   },
-  "last_update": "2025-12-11T11:28:02.574839"
+  "last_update": "2025-12-12T13:48:17.101566"
 }

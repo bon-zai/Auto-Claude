@@ -4,6 +4,7 @@ import type {
   InsightsChatMessage,
   InsightsChatStatus,
   InsightsStreamChunk,
+  InsightsToolUsage,
   TaskMetadata,
   Task
 } from '../../shared/types';
@@ -20,6 +21,7 @@ interface InsightsState {
   pendingMessage: string;
   streamingContent: string; // Accumulates streaming response
   currentTool: ToolUsage | null; // Currently executing tool
+  toolsUsed: InsightsToolUsage[]; // Tools used during current response
 
   // Actions
   setSession: (session: InsightsSession | null) => void;
@@ -30,6 +32,8 @@ interface InsightsState {
   appendStreamingContent: (content: string) => void;
   clearStreamingContent: () => void;
   setCurrentTool: (tool: ToolUsage | null) => void;
+  addToolUsage: (tool: ToolUsage) => void;
+  clearToolsUsed: () => void;
   finalizeStreamingMessage: (suggestedTask?: InsightsChatMessage['suggestedTask']) => void;
   clearSession: () => void;
 }
@@ -46,6 +50,7 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
   pendingMessage: '',
   streamingContent: '',
   currentTool: null,
+  toolsUsed: [],
 
   // Actions
   setSession: (session) => set({ session }),
@@ -108,22 +113,42 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
 
   setCurrentTool: (tool) => set({ currentTool: tool }),
 
+  addToolUsage: (tool) =>
+    set((state) => ({
+      toolsUsed: [
+        ...state.toolsUsed,
+        {
+          name: tool.name,
+          input: tool.input,
+          timestamp: new Date()
+        }
+      ]
+    })),
+
+  clearToolsUsed: () => set({ toolsUsed: [] }),
+
   finalizeStreamingMessage: (suggestedTask) =>
     set((state) => {
       const content = state.streamingContent;
-      if (!content && !suggestedTask) return { streamingContent: '' };
+      const toolsUsed = state.toolsUsed.length > 0 ? [...state.toolsUsed] : undefined;
+
+      if (!content && !suggestedTask && !toolsUsed) {
+        return { streamingContent: '', toolsUsed: [] };
+      }
 
       const newMessage: InsightsChatMessage = {
         id: `msg-${Date.now()}`,
         role: 'assistant',
         content,
         timestamp: new Date(),
-        suggestedTask
+        suggestedTask,
+        toolsUsed
       };
 
       if (!state.session) {
         return {
           streamingContent: '',
+          toolsUsed: [],
           session: {
             id: `session-${Date.now()}`,
             projectId: '',
@@ -136,6 +161,7 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
 
       return {
         streamingContent: '',
+        toolsUsed: [],
         session: {
           ...state.session,
           messages: [...state.session.messages, newMessage],
@@ -150,7 +176,8 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
       status: initialStatus,
       pendingMessage: '',
       streamingContent: '',
-      currentTool: null
+      currentTool: null,
+      toolsUsed: []
     })
 }));
 
@@ -180,6 +207,7 @@ export function sendMessage(projectId: string, message: string): void {
   // Clear pending and set status
   store.setPendingMessage('');
   store.clearStreamingContent();
+  store.clearToolsUsed(); // Clear tools from previous response
   store.setStatus({
     phase: 'thinking',
     message: 'Processing your message...'
@@ -236,6 +264,11 @@ export function setupInsightsListeners(): () => void {
         case 'tool_start':
           if (chunk.tool) {
             store().setCurrentTool({
+              name: chunk.tool.name,
+              input: chunk.tool.input
+            });
+            // Record this tool usage for history
+            store().addToolUsage({
               name: chunk.tool.name,
               input: chunk.tool.input
             });

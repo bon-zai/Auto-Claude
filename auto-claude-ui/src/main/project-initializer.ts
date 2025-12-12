@@ -3,6 +3,21 @@ import path from 'path';
 import crypto from 'crypto';
 
 /**
+ * Debug logging - only logs when AUTO_CLAUDE_DEBUG env var is set
+ */
+const DEBUG = process.env.AUTO_CLAUDE_DEBUG === 'true' || process.env.AUTO_CLAUDE_DEBUG === '1';
+
+function debug(message: string, data?: Record<string, unknown>): void {
+  if (DEBUG) {
+    if (data) {
+      console.log(`[ProjectInitializer] ${message}`, JSON.stringify(data, null, 2));
+    } else {
+      console.log(`[ProjectInitializer] ${message}`);
+    }
+  }
+}
+
+/**
  * Files and directories to exclude when copying auto-claude
  */
 const EXCLUDE_PATTERNS = [
@@ -218,18 +233,19 @@ export function checkVersion(
   projectPath: string,
   sourcePath: string
 ): VersionCheckResult {
-  // Check for both .auto-claude and auto-claude folders
+  debug('checkVersion called', { projectPath, sourcePath });
+
+  // Only .auto-claude counts as "installed" - auto-claude/ is source code
   const dotAutoBuildPath = path.join(projectPath, '.auto-claude');
-  const autoBuildPath = path.join(projectPath, 'auto-claude');
 
   let installedPath: string | null = null;
   if (existsSync(dotAutoBuildPath)) {
     installedPath = dotAutoBuildPath;
-  } else if (existsSync(autoBuildPath)) {
-    installedPath = autoBuildPath;
+    debug('Found .auto-claude folder (installed)');
   }
 
   if (!installedPath) {
+    debug('No .auto-claude folder found - not initialized');
     return {
       isInitialized: false,
       updateAvailable: false
@@ -302,8 +318,11 @@ export function initializeProject(
   projectPath: string,
   sourcePath: string
 ): InitializationResult {
+  debug('initializeProject called', { projectPath, sourcePath });
+
   // Validate source exists
   if (!existsSync(sourcePath)) {
+    debug('Source path does not exist', { sourcePath });
     return {
       success: false,
       error: `Auto-build source not found at: ${sourcePath}`
@@ -312,6 +331,7 @@ export function initializeProject(
 
   // Validate project path exists
   if (!existsSync(projectPath)) {
+    debug('Project path does not exist', { projectPath });
     return {
       success: false,
       error: `Project directory not found: ${projectPath}`
@@ -322,30 +342,59 @@ export function initializeProject(
   const dotAutoBuildPath = path.join(projectPath, '.auto-claude');
   const autoBuildPath = path.join(projectPath, 'auto-claude');
 
-  if (existsSync(dotAutoBuildPath) || existsSync(autoBuildPath)) {
+  const dotExists = existsSync(dotAutoBuildPath);
+  const sourceExists = existsSync(autoBuildPath);
+  debug('Checking existing paths', {
+    dotAutoBuildPath,
+    dotExists,
+    autoBuildPath,
+    sourceExists
+  });
+
+  // Only .auto-claude counts as "initialized" - auto-claude/ is the source folder
+  // This allows initializing the Auto Claude project itself (which has auto-claude/ source)
+  if (dotExists) {
+    debug('Already initialized - .auto-claude exists');
     return {
       success: false,
-      error: 'Project already has auto-claude initialized'
+      error: 'Project already has auto-claude initialized (.auto-claude exists)'
     };
   }
 
   try {
+    debug('Copying files to .auto-claude', { from: sourcePath, to: dotAutoBuildPath });
     // Copy files to .auto-claude
     copyDirectoryRecursive(sourcePath, dotAutoBuildPath, false);
 
     // Create specs directory
     const specsDir = path.join(dotAutoBuildPath, 'specs');
     if (!existsSync(specsDir)) {
+      debug('Creating specs directory', { specsDir });
       mkdirSync(specsDir, { recursive: true });
     }
-
-    // Create .gitkeep in specs
     writeFileSync(path.join(specsDir, '.gitkeep'), '');
+
+    // Create roadmap directory
+    const roadmapDir = path.join(dotAutoBuildPath, 'roadmap');
+    if (!existsSync(roadmapDir)) {
+      debug('Creating roadmap directory', { roadmapDir });
+      mkdirSync(roadmapDir, { recursive: true });
+    }
+    writeFileSync(path.join(roadmapDir, '.gitkeep'), '');
+
+    // Create ideation directory
+    const ideationDir = path.join(dotAutoBuildPath, 'ideation');
+    if (!existsSync(ideationDir)) {
+      debug('Creating ideation directory', { ideationDir });
+      mkdirSync(ideationDir, { recursive: true });
+    }
+    writeFileSync(path.join(ideationDir, '.gitkeep'), '');
 
     // Copy .env.example to .env if .env doesn't exist
     const envExamplePath = path.join(dotAutoBuildPath, '.env.example');
     const envPath = path.join(dotAutoBuildPath, '.env');
     if (existsSync(envExamplePath) && !existsSync(envPath)) {
+      debug('Copying .env.example to .env');
       copyFileSync(envExamplePath, envPath);
     }
 
@@ -354,6 +403,7 @@ export function initializeProject(
     const sourceHash = calculateDirectoryHash(sourcePath);
     const now = new Date().toISOString();
 
+    debug('Writing version metadata', { version, sourceHash });
     writeVersionMetadata(dotAutoBuildPath, {
       version,
       sourceHash,
@@ -362,15 +412,18 @@ export function initializeProject(
       updatedAt: now
     });
 
+    debug('Initialization complete', { version });
     return {
       success: true,
       version,
       wasUpdate: false
     };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error during initialization';
+    debug('Initialization failed', { error: errorMessage });
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error during initialization'
+      error: errorMessage
     };
   }
 }
@@ -382,29 +435,30 @@ export function updateProject(
   projectPath: string,
   sourcePath: string
 ): InitializationResult {
+  debug('updateProject called', { projectPath, sourcePath });
+
   // Validate source exists
   if (!existsSync(sourcePath)) {
+    debug('Source path does not exist');
     return {
       success: false,
       error: `Auto-build source not found at: ${sourcePath}`
     };
   }
 
-  // Find existing auto-claude folder
+  // Only .auto-claude is considered an installed instance
   const dotAutoBuildPath = path.join(projectPath, '.auto-claude');
-  const autoBuildPath = path.join(projectPath, 'auto-claude');
 
-  let targetPath: string;
-  if (existsSync(dotAutoBuildPath)) {
-    targetPath = dotAutoBuildPath;
-  } else if (existsSync(autoBuildPath)) {
-    targetPath = autoBuildPath;
-  } else {
+  if (!existsSync(dotAutoBuildPath)) {
+    debug('No .auto-claude folder found to update');
     return {
       success: false,
-      error: 'No auto-claude folder found to update'
+      error: 'No .auto-claude folder found to update. Initialize the project first.'
     };
   }
+
+  const targetPath = dotAutoBuildPath;
+  debug('Updating .auto-claude folder', { targetPath });
 
   try {
     // Copy files with preservation of specs/ and .env
@@ -438,16 +492,36 @@ export function updateProject(
 }
 
 /**
- * Get the auto-claude folder path for a project (either .auto-claude or auto-claude)
+ * Get the auto-claude folder path for a project.
+ *
+ * IMPORTANT: Only .auto-claude/ is considered a valid "installed" auto-claude.
+ * The auto-claude/ folder (if it exists) is the SOURCE CODE being developed,
+ * not an installation. This allows Auto Claude to be used to develop itself.
  */
 export function getAutoBuildPath(projectPath: string): string | null {
   const dotAutoBuildPath = path.join(projectPath, '.auto-claude');
   const autoBuildPath = path.join(projectPath, 'auto-claude');
 
-  if (existsSync(dotAutoBuildPath)) {
+  const dotExists = existsSync(dotAutoBuildPath);
+  const sourceExists = existsSync(autoBuildPath);
+
+  debug('getAutoBuildPath called', {
+    projectPath,
+    dotAutoBuildPath,
+    dotExists,
+    autoBuildPath,
+    sourceExists
+  });
+
+  // Only .auto-claude counts as an "installed" auto-claude
+  // auto-claude/ is the source code folder, not an installation
+  if (dotExists) {
+    debug('Returning .auto-claude (installed version)');
     return '.auto-claude';
-  } else if (existsSync(autoBuildPath)) {
-    return 'auto-claude';
   }
+
+  // Don't return auto-claude/ - that's source code, not an installation
+  // The project needs to be initialized to create .auto-claude/
+  debug('No .auto-claude folder found - project not initialized');
   return null;
 }

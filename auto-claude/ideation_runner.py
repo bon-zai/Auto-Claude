@@ -147,11 +147,12 @@ class IdeationOrchestrator:
         self.include_kanban_context = include_kanban_context
         self.max_ideas_per_type = max_ideas_per_type
 
-        # Default output to project's auto-claude directory
+        # Default output to project's .auto-claude directory (installed instance)
+        # Note: auto-claude/ is source code, .auto-claude/ is the installed instance
         if output_dir:
             self.output_dir = Path(output_dir)
         else:
-            self.output_dir = self.project_dir / "auto-claude" / "ideation"
+            self.output_dir = self.project_dir / ".auto-claude" / "ideation"
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -243,8 +244,8 @@ class IdeationOrchestrator:
             "planned_features": [],
         }
 
-        # Get project index
-        project_index_path = self.project_dir / "auto-claude" / "project_index.json"
+        # Get project index (from .auto-claude - the installed instance)
+        project_index_path = self.project_dir / ".auto-claude" / "project_index.json"
         if project_index_path.exists():
             try:
                 with open(project_index_path) as f:
@@ -261,7 +262,7 @@ class IdeationOrchestrator:
 
         # Get roadmap context if enabled
         if self.include_roadmap_context:
-            roadmap_path = self.project_dir / "auto-claude" / "roadmap" / "roadmap.json"
+            roadmap_path = self.project_dir / ".auto-claude" / "roadmap" / "roadmap.json"
             if roadmap_path.exists():
                 try:
                     with open(roadmap_path) as f:
@@ -276,7 +277,7 @@ class IdeationOrchestrator:
                     pass
 
             # Also check discovery for audience
-            discovery_path = self.project_dir / "auto-claude" / "roadmap" / "roadmap_discovery.json"
+            discovery_path = self.project_dir / ".auto-claude" / "roadmap" / "roadmap_discovery.json"
             if discovery_path.exists() and not context["target_audience"]:
                 try:
                     with open(discovery_path) as f:
@@ -292,7 +293,7 @@ class IdeationOrchestrator:
 
         # Get kanban context if enabled
         if self.include_kanban_context:
-            specs_dir = self.project_dir / "auto-claude" / "specs"
+            specs_dir = self.project_dir / ".auto-claude" / "specs"
             if specs_dir.exists():
                 for spec_dir in specs_dir.iterdir():
                     if spec_dir.is_dir():
@@ -357,7 +358,7 @@ class IdeationOrchestrator:
         """Ensure project index exists."""
 
         project_index = self.output_dir / "project_index.json"
-        auto_build_index = self.project_dir / "auto-claude" / "project_index.json"
+        auto_build_index = self.project_dir / ".auto-claude" / "project_index.json"
 
         # Check if we can copy existing index
         if auto_build_index.exists():

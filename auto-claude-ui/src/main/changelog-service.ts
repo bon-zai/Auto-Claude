@@ -103,9 +103,12 @@ export class ChangelogService extends EventEmitter {
 
   /**
    * Get completed tasks from a project
+   * @param projectPath - Project root path
+   * @param tasks - List of tasks
+   * @param specsBaseDir - Base specs directory (e.g., 'auto-claude/specs' or 'dev/auto-claude/specs')
    */
-  getCompletedTasks(projectPath: string, tasks: Task[]): ChangelogTask[] {
-    const specsDir = path.join(projectPath, AUTO_BUILD_PATHS.SPECS_DIR);
+  getCompletedTasks(projectPath: string, tasks: Task[], specsBaseDir?: string): ChangelogTask[] {
+    const specsDir = path.join(projectPath, specsBaseDir || AUTO_BUILD_PATHS.SPECS_DIR);
 
     return tasks
       .filter(task => task.status === 'done')
@@ -127,9 +130,13 @@ export class ChangelogService extends EventEmitter {
 
   /**
    * Load spec files for given tasks
+   * @param projectPath - Project root path
+   * @param taskIds - IDs of tasks to load specs for
+   * @param tasks - List of all tasks
+   * @param specsBaseDir - Base specs directory (e.g., 'auto-claude/specs' or 'dev/auto-claude/specs')
    */
-  async loadTaskSpecs(projectPath: string, taskIds: string[], tasks: Task[]): Promise<TaskSpecContent[]> {
-    const specsDir = path.join(projectPath, AUTO_BUILD_PATHS.SPECS_DIR);
+  async loadTaskSpecs(projectPath: string, taskIds: string[], tasks: Task[], specsBaseDir?: string): Promise<TaskSpecContent[]> {
+    const specsDir = path.join(projectPath, specsBaseDir || AUTO_BUILD_PATHS.SPECS_DIR);
     const results: TaskSpecContent[] = [];
 
     for (const taskId of taskIds) {
