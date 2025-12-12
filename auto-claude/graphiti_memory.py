@@ -1,10 +1,16 @@
 """
-Graphiti Memory Integration
-===========================
+Graphiti Memory Integration V2
+==============================
 
 Provides persistent knowledge graph memory using Graphiti with FalkorDB backend.
 This is an OPTIONAL enhancement layer that stores data ALONGSIDE file-based memory
 (see memory.py), not as a replacement.
+
+V2 Changes:
+- Multi-provider support (OpenAI, Anthropic, Azure OpenAI, Ollama)
+- Factory pattern for LLM clients and embedders
+- Project-level group_id for shared context across specs
+- Better error handling and graceful degradation
 
 Key Features:
 - Session insight storage as episodes
@@ -24,7 +30,9 @@ Implementation:
 - Uses lazy initialization - doesn't connect until first use
 - All operations are async with proper error handling
 - On failure, logs warning and continues (file-based already succeeded)
-- Stores spec-specific memories using spec name as group_id
+- Supports two group_id modes:
+  - Spec-level: Each spec gets its own group_id (default)
+  - Project-level: All specs share context via project name
 
 Usage:
     from graphiti_memory import GraphitiMemory, is_graphiti_enabled
@@ -37,6 +45,7 @@ Usage:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -51,6 +60,9 @@ from graphiti_config import (
     EPISODE_TYPE_CODEBASE_DISCOVERY,
     EPISODE_TYPE_PATTERN,
     EPISODE_TYPE_GOTCHA,
+    EPISODE_TYPE_TASK_OUTCOME,
+    EPISODE_TYPE_QA_RESULT,
+    EPISODE_TYPE_HISTORICAL_CONTEXT,
 )
 
 # Configure logging
@@ -62,6 +74,12 @@ MAX_CONTEXT_RESULTS = 10
 # Retry configuration
 MAX_RETRIES = 2
 RETRY_DELAY_SECONDS = 1
+
+
+class GroupIdMode:
+    """Group ID modes for Graphiti memory scoping."""
+    SPEC = "spec"      # Each spec gets its own namespace
+    PROJECT = "project"  # All specs share project-wide context
 
 
 class GraphitiMemory:
@@ -77,22 +95,35 @@ class GraphitiMemory:
     All operations are async and include error handling with fallback behavior.
     The integration is OPTIONAL - if Graphiti is disabled or unavailable,
     operations gracefully no-op or return empty results.
+
+    V2 supports multi-provider configurations via factory pattern.
     """
 
-    def __init__(self, spec_dir: Path, project_dir: Path):
+    def __init__(
+        self,
+        spec_dir: Path,
+        project_dir: Path,
+        group_id_mode: str = GroupIdMode.SPEC,
+    ):
         """
         Initialize Graphiti memory manager.
 
         Args:
-            spec_dir: Spec directory (used as namespace/group_id)
-            project_dir: Project root directory
+            spec_dir: Spec directory (used as namespace/group_id in SPEC mode)
+            project_dir: Project root directory (used as namespace in PROJECT mode)
+            group_id_mode: How to scope the memory namespace:
+                - "spec": Each spec gets isolated memory (default)
+                - "project": All specs share project-wide context
         """
         self.spec_dir = spec_dir
         self.project_dir = project_dir
+        self.group_id_mode = group_id_mode
         self.config = GraphitiConfig.from_env()
         self.state: Optional[GraphitiState] = None
         self._graphiti = None  # Lazy initialization
         self._driver = None
+        self._llm_client = None
+        self._embedder = None
         self._initialized = False
         self._available = False
 
@@ -101,6 +132,10 @@ class GraphitiMemory:
 
         # Check availability
         self._available = self.config.is_valid()
+
+        # Log provider configuration if enabled
+        if self._available:
+            logger.info(f"Graphiti configured with providers: {self.config.get_provider_summary()}")
 
     @property
     def is_enabled(self) -> bool:
@@ -114,15 +149,34 @@ class GraphitiMemory:
 
     @property
     def group_id(self) -> str:
-        """Get the group ID for this spec (uses spec folder name)."""
+        """
+        Get the group ID for memory namespace.
+
+        Returns:
+            - In SPEC mode: spec folder name (e.g., "001-add-auth")
+            - In PROJECT mode: project name with hash for uniqueness
+        """
+        if self.group_id_mode == GroupIdMode.PROJECT:
+            # Create a stable project-level group ID
+            project_name = self.project_dir.name
+            # Add a short hash of the absolute path for uniqueness
+            path_hash = hashlib.md5(str(self.project_dir.resolve()).encode()).hexdigest()[:8]
+            return f"project_{project_name}_{path_hash}"
+        else:
+            # Default to spec-level isolation
+            return self.spec_dir.name
+
+    @property
+    def spec_context_id(self) -> str:
+        """Get a context ID specific to this spec (for filtering in project mode)."""
         return self.spec_dir.name
 
     async def initialize(self) -> bool:
         """
-        Initialize the Graphiti client and build indices.
+        Initialize the Graphiti client with configured providers.
 
-        This is called lazily on first operation. Handles connection
-        errors gracefully by disabling Graphiti for the session.
+        This is called lazily on first operation. Uses factory pattern to
+        create LLM client and embedder based on configured providers.
 
         Returns:
             True if initialization succeeded
@@ -135,9 +189,42 @@ class GraphitiMemory:
             return False
 
         try:
-            # Import Graphiti here to avoid import errors when disabled
+            # Import Graphiti core
             from graphiti_core import Graphiti
             from graphiti_core.driver.falkordb_driver import FalkorDriver
+
+            # Import our provider factory
+            from graphiti_providers import (
+                create_llm_client,
+                create_embedder,
+                ProviderError,
+                ProviderNotInstalled,
+            )
+
+            # Create providers using factory pattern
+            try:
+                self._llm_client = create_llm_client(self.config)
+                logger.info(f"Created LLM client for provider: {self.config.llm_provider}")
+            except ProviderNotInstalled as e:
+                logger.warning(f"LLM provider packages not installed: {e}")
+                self._available = False
+                return False
+            except ProviderError as e:
+                logger.warning(f"LLM provider configuration error: {e}")
+                self._available = False
+                return False
+
+            try:
+                self._embedder = create_embedder(self.config)
+                logger.info(f"Created embedder for provider: {self.config.embedder_provider}")
+            except ProviderNotInstalled as e:
+                logger.warning(f"Embedder provider packages not installed: {e}")
+                self._available = False
+                return False
+            except ProviderError as e:
+                logger.warning(f"Embedder provider configuration error: {e}")
+                self._available = False
+                return False
 
             # Initialize FalkorDB driver
             self._driver = FalkorDriver(
@@ -147,8 +234,12 @@ class GraphitiMemory:
                 database=self.config.database,
             )
 
-            # Initialize Graphiti with the driver
-            self._graphiti = Graphiti(graph_driver=self._driver)
+            # Initialize Graphiti with the custom providers
+            self._graphiti = Graphiti(
+                graph_driver=self._driver,
+                llm_client=self._llm_client,
+                embedder=self._embedder,
+            )
 
             # Build indices (first time only)
             if not self.state or not self.state.indices_built:
@@ -163,10 +254,15 @@ class GraphitiMemory:
                 self.state.indices_built = True
                 self.state.database = self.config.database
                 self.state.created_at = datetime.now(timezone.utc).isoformat()
+                self.state.llm_provider = self.config.llm_provider
+                self.state.embedder_provider = self.config.embedder_provider
                 self.state.save(self.spec_dir)
 
             self._initialized = True
-            logger.info(f"Graphiti initialized for spec: {self.group_id}")
+            logger.info(
+                f"Graphiti initialized for group: {self.group_id} "
+                f"(mode: {self.group_id_mode}, providers: {self.config.get_provider_summary()})"
+            )
             return True
 
         except ImportError as e:
@@ -198,6 +294,8 @@ class GraphitiMemory:
             finally:
                 self._graphiti = None
                 self._driver = None
+                self._llm_client = None
+                self._embedder = None
                 self._initialized = False
 
     async def save_session_insights(
@@ -226,9 +324,10 @@ class GraphitiMemory:
         try:
             from graphiti_core.nodes import EpisodeType
 
-            # Build episode content
+            # Build episode content with spec context for filtering
             episode_content = {
                 "type": EPISODE_TYPE_SESSION_INSIGHT,
+                "spec_id": self.spec_context_id,
                 "session_number": session_num,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 **insights,
@@ -236,10 +335,10 @@ class GraphitiMemory:
 
             # Add as episode
             await self._graphiti.add_episode(
-                name=f"session_{session_num:03d}",
+                name=f"session_{session_num:03d}_{self.spec_context_id}",
                 episode_body=json.dumps(episode_content),
                 source=EpisodeType.text,
-                source_description=f"Auto-build session insight for {self.group_id}",
+                source_description=f"Auto-build session insight for {self.spec_context_id}",
                 reference_time=datetime.now(timezone.utc),
                 group_id=self.group_id,
             )
@@ -250,7 +349,7 @@ class GraphitiMemory:
                 self.state.episode_count += 1
                 self.state.save(self.spec_dir)
 
-            logger.info(f"Saved session {session_num} insights to Graphiti")
+            logger.info(f"Saved session {session_num} insights to Graphiti (group: {self.group_id})")
             return True
 
         except Exception as e:
@@ -287,6 +386,7 @@ class GraphitiMemory:
             # Build episode content
             episode_content = {
                 "type": EPISODE_TYPE_CODEBASE_DISCOVERY,
+                "spec_id": self.spec_context_id,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "files": discoveries,
             }
@@ -332,6 +432,7 @@ class GraphitiMemory:
 
             episode_content = {
                 "type": EPISODE_TYPE_PATTERN,
+                "spec_id": self.spec_context_id,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "pattern": pattern,
             }
@@ -375,6 +476,7 @@ class GraphitiMemory:
 
             episode_content = {
                 "type": EPISODE_TYPE_GOTCHA,
+                "spec_id": self.spec_context_id,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "gotcha": gotcha,
             }
@@ -400,10 +502,68 @@ class GraphitiMemory:
             self._record_error(f"Save gotcha failed: {e}")
             return False
 
+    async def save_task_outcome(
+        self,
+        task_id: str,
+        success: bool,
+        outcome: str,
+        metadata: Optional[dict] = None,
+    ) -> bool:
+        """
+        Save a task outcome for learning from past successes/failures.
+
+        Args:
+            task_id: Unique identifier for the task (e.g., chunk ID)
+            success: Whether the task succeeded
+            outcome: Description of what happened
+            metadata: Optional additional context
+
+        Returns:
+            True if saved successfully
+        """
+        if not await self._ensure_initialized():
+            return False
+
+        try:
+            from graphiti_core.nodes import EpisodeType
+
+            episode_content = {
+                "type": EPISODE_TYPE_TASK_OUTCOME,
+                "spec_id": self.spec_context_id,
+                "task_id": task_id,
+                "success": success,
+                "outcome": outcome,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                **(metadata or {}),
+            }
+
+            await self._graphiti.add_episode(
+                name=f"task_outcome_{task_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
+                episode_body=json.dumps(episode_content),
+                source=EpisodeType.text,
+                source_description=f"Task outcome for {task_id}",
+                reference_time=datetime.now(timezone.utc),
+                group_id=self.group_id,
+            )
+
+            if self.state:
+                self.state.episode_count += 1
+                self.state.save(self.spec_dir)
+
+            status = "succeeded" if success else "failed"
+            logger.info(f"Saved task outcome to Graphiti: {task_id} {status}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to save task outcome: {e}")
+            self._record_error(f"Save task outcome failed: {e}")
+            return False
+
     async def get_relevant_context(
         self,
         query: str,
         num_results: int = MAX_CONTEXT_RESULTS,
+        include_project_context: bool = True,
     ) -> list[dict]:
         """
         Search for relevant context based on a query.
@@ -411,6 +571,7 @@ class GraphitiMemory:
         Args:
             query: Search query (e.g., "authentication patterns", "database models")
             num_results: Maximum number of results to return
+            include_project_context: If True and in PROJECT mode, search project-wide
 
         Returns:
             List of relevant context items with keys:
@@ -422,9 +583,21 @@ class GraphitiMemory:
             return []
 
         try:
+            # Determine which group IDs to search
+            group_ids = [self.group_id]
+
+            # In spec mode, optionally include project context too
+            if self.group_id_mode == GroupIdMode.SPEC and include_project_context:
+                # Calculate project group ID
+                project_name = self.project_dir.name
+                path_hash = hashlib.md5(str(self.project_dir.resolve()).encode()).hexdigest()[:8]
+                project_group_id = f"project_{project_name}_{path_hash}"
+                if project_group_id != self.group_id:
+                    group_ids.append(project_group_id)
+
             results = await self._graphiti.search(
                 query=query,
-                group_ids=[self.group_id],
+                group_ids=group_ids,
                 num_results=min(num_results, MAX_CONTEXT_RESULTS),
             )
 
@@ -450,12 +623,14 @@ class GraphitiMemory:
     async def get_session_history(
         self,
         limit: int = 5,
+        spec_only: bool = True,
     ) -> list[dict]:
         """
         Get recent session insights from the knowledge graph.
 
         Args:
             limit: Maximum number of sessions to return
+            spec_only: If True, only return sessions from this spec
 
         Returns:
             List of session insight summaries
@@ -479,6 +654,9 @@ class GraphitiMemory:
                         # Try to parse as JSON
                         data = json.loads(content) if isinstance(content, str) else content
                         if data.get('type') == EPISODE_TYPE_SESSION_INSIGHT:
+                            # Filter by spec if requested
+                            if spec_only and data.get('spec_id') != self.spec_context_id:
+                                continue
                             sessions.append(data)
                     except (json.JSONDecodeError, TypeError):
                         continue
@@ -489,6 +667,53 @@ class GraphitiMemory:
 
         except Exception as e:
             logger.warning(f"Failed to get session history: {e}")
+            return []
+
+    async def get_similar_task_outcomes(
+        self,
+        task_description: str,
+        limit: int = 5,
+    ) -> list[dict]:
+        """
+        Find similar past task outcomes to learn from.
+
+        Args:
+            task_description: Description of the current task
+            limit: Maximum number of results
+
+        Returns:
+            List of similar task outcomes with success/failure info
+        """
+        if not await self._ensure_initialized():
+            return []
+
+        try:
+            results = await self._graphiti.search(
+                query=f"task outcome: {task_description}",
+                group_ids=[self.group_id],
+                num_results=limit * 2,
+            )
+
+            outcomes = []
+            for result in results:
+                content = getattr(result, 'content', None) or getattr(result, 'fact', None)
+                if content and EPISODE_TYPE_TASK_OUTCOME in str(content):
+                    try:
+                        data = json.loads(content) if isinstance(content, str) else content
+                        if data.get('type') == EPISODE_TYPE_TASK_OUTCOME:
+                            outcomes.append({
+                                "task_id": data.get("task_id"),
+                                "success": data.get("success"),
+                                "outcome": data.get("outcome"),
+                                "score": getattr(result, 'score', 0.0),
+                            })
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+            return outcomes[:limit]
+
+        except Exception as e:
+            logger.warning(f"Failed to get similar task outcomes: {e}")
             return []
 
     def get_status_summary(self) -> dict:
@@ -504,6 +729,9 @@ class GraphitiMemory:
             "database": self.config.database if self.is_enabled else None,
             "host": f"{self.config.falkordb_host}:{self.config.falkordb_port}" if self.is_enabled else None,
             "group_id": self.group_id,
+            "group_id_mode": self.group_id_mode,
+            "llm_provider": self.config.llm_provider if self.is_enabled else None,
+            "embedder_provider": self.config.embedder_provider if self.is_enabled else None,
             "episode_count": self.state.episode_count if self.state else 0,
             "last_session": self.state.last_session if self.state else None,
             "errors": len(self.state.error_log) if self.state else 0,
@@ -534,7 +762,11 @@ class GraphitiMemory:
 
 
 # Convenience function for getting a memory manager
-def get_graphiti_memory(spec_dir: Path, project_dir: Path) -> GraphitiMemory:
+def get_graphiti_memory(
+    spec_dir: Path,
+    project_dir: Path,
+    group_id_mode: str = GroupIdMode.SPEC,
+) -> GraphitiMemory:
     """
     Get a GraphitiMemory instance for the given spec.
 
@@ -543,11 +775,12 @@ def get_graphiti_memory(spec_dir: Path, project_dir: Path) -> GraphitiMemory:
     Args:
         spec_dir: Spec directory
         project_dir: Project root directory
+        group_id_mode: "spec" for isolated memory, "project" for shared
 
     Returns:
         GraphitiMemory instance
     """
-    return GraphitiMemory(spec_dir, project_dir)
+    return GraphitiMemory(spec_dir, project_dir, group_id_mode)
 
 
 async def test_graphiti_connection() -> tuple[bool, str]:
@@ -562,12 +795,22 @@ async def test_graphiti_connection() -> tuple[bool, str]:
     if not config.enabled:
         return False, "Graphiti not enabled (GRAPHITI_ENABLED not set to true)"
 
-    if not config.openai_api_key:
-        return False, "OpenAI API key not set (required for Graphiti embeddings)"
+    # Validate provider configuration
+    errors = config.get_validation_errors()
+    if errors:
+        return False, f"Configuration errors: {'; '.join(errors)}"
 
     try:
         from graphiti_core import Graphiti
         from graphiti_core.driver.falkordb_driver import FalkorDriver
+        from graphiti_providers import create_llm_client, create_embedder, ProviderError
+
+        # Create providers
+        try:
+            llm_client = create_llm_client(config)
+            embedder = create_embedder(config)
+        except ProviderError as e:
+            return False, f"Provider error: {e}"
 
         # Try to connect
         driver = FalkorDriver(
@@ -577,16 +820,64 @@ async def test_graphiti_connection() -> tuple[bool, str]:
             database=config.database,
         )
 
-        graphiti = Graphiti(graph_driver=driver)
+        graphiti = Graphiti(
+            graph_driver=driver,
+            llm_client=llm_client,
+            embedder=embedder,
+        )
 
         # Try a simple operation
         await graphiti.build_indices_and_constraints()
         await graphiti.close()
 
-        return True, f"Connected to FalkorDB at {config.falkordb_host}:{config.falkordb_port}"
+        return True, (
+            f"Connected to FalkorDB at {config.falkordb_host}:{config.falkordb_port} "
+            f"(providers: {config.get_provider_summary()})"
+        )
 
     except ImportError as e:
         return False, f"Graphiti packages not installed: {e}"
 
     except Exception as e:
         return False, f"Connection failed: {e}"
+
+
+async def test_provider_configuration() -> dict:
+    """
+    Test the current provider configuration and return detailed status.
+
+    Returns:
+        Dict with test results for each component
+    """
+    from graphiti_providers import (
+        test_llm_connection,
+        test_embedder_connection,
+        test_ollama_connection,
+        validate_embedding_config,
+    )
+
+    config = GraphitiConfig.from_env()
+
+    results = {
+        "config_valid": config.is_valid(),
+        "validation_errors": config.get_validation_errors(),
+        "llm_provider": config.llm_provider,
+        "embedder_provider": config.embedder_provider,
+        "llm_test": None,
+        "embedder_test": None,
+    }
+
+    # Test LLM
+    llm_success, llm_msg = await test_llm_connection(config)
+    results["llm_test"] = {"success": llm_success, "message": llm_msg}
+
+    # Test embedder
+    emb_success, emb_msg = await test_embedder_connection(config)
+    results["embedder_test"] = {"success": emb_success, "message": emb_msg}
+
+    # Extra test for Ollama
+    if config.llm_provider == "ollama" or config.embedder_provider == "ollama":
+        ollama_success, ollama_msg = await test_ollama_connection(config.ollama_base_url)
+        results["ollama_test"] = {"success": ollama_success, "message": ollama_msg}
+
+    return results
