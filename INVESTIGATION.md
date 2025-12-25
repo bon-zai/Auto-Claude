@@ -306,28 +306,188 @@ What actually happened:
 
 ---
 
+### Subtask 2-2: GitHub Actions Workflow Run Analysis
+
+**Commands Used:**
+```bash
+gh run list --workflow=release.yml --limit=20
+gh run view 20433472030 --json conclusion,status,headSha,event,jobs
+gh run view 20433472034 --json conclusion,status,headSha,jobs  # Validate Version workflow
+```
+
+#### Release Workflow Run Details
+
+| Property | Value |
+|----------|-------|
+| Run ID | 20433472030 |
+| Status | Completed |
+| Conclusion | **success** |
+| Event | push (tag v2.7.1) |
+| Head SHA | `772a5006d45487b600ce4079bae1c98f9ccf6b2e` |
+| Created At | 2025-12-22T13:35:39Z |
+| Updated At | 2025-12-22T13:53:02Z |
+| Total Duration | ~17 minutes |
+
+#### Build Jobs Summary
+
+| Job | Status | Duration | Started | Completed |
+|-----|--------|----------|---------|-----------|
+| build-linux | ✅ success | ~2.5 min | 13:35:42Z | 13:38:15Z |
+| build-windows | ✅ success | ~4.5 min | 13:35:41Z | 13:40:11Z |
+| build-macos-intel | ✅ success | ~7 min | 13:35:42Z | 13:42:52Z |
+| build-macos-arm64 | ✅ success | ~5.5 min | 13:35:42Z | 13:41:12Z |
+| create-release | ✅ success | ~10 min | 13:42:55Z | 13:53:01Z |
+
+#### Create-Release Job Steps
+
+| Step | Conclusion |
+|------|------------|
+| Set up job | ✅ success |
+| Run actions/checkout@v4 | ✅ success |
+| Download all artifacts | ✅ success |
+| Flatten and validate artifacts | ✅ success |
+| Generate checksums | ✅ success |
+| Scan with VirusTotal | ✅ success |
+| Dry run summary | ⏭️ skipped |
+| Generate changelog | ✅ success |
+| Create Release | ✅ success |
+
+**Workflow Analysis:** The release workflow executed **successfully** - all build jobs and the release creation completed without errors. The workflow correctly:
+1. Checked out commit `772a5006d45487b600ce4079bae1c98f9ccf6b2e`
+2. Built artifacts for all platforms (Linux, Windows, macOS Intel, macOS ARM64)
+3. Generated checksums
+4. Ran VirusTotal scans
+5. Created the GitHub release with artifacts
+
+**Key Finding:** The workflow operated as designed. The problem was the **input** (source code at tagged commit), not the **workflow logic**.
+
+---
+
+#### 🚨 CRITICAL: Validate Version Workflow FAILED
+
+**Run ID:** 20433472034
+**Conclusion:** ❌ **FAILURE**
+
+| Step | Conclusion |
+|------|------------|
+| Set up job | ✅ success |
+| Checkout | ✅ success |
+| Extract version from tag | ✅ success |
+| Extract version from package.json | ✅ success |
+| **Compare versions** | ❌ **FAILURE** |
+| Version validation result | ⏭️ skipped |
+
+**What Happened:**
+1. The `validate-version.yml` workflow triggered on the v2.7.1 tag push
+2. It correctly detected that:
+   - Tag version: `2.7.1`
+   - package.json version: `2.7.0`
+3. It **FAILED** with an error because versions didn't match
+
+**Why Didn't This Stop the Release?**
+
+The `validate-version.yml` and `release.yml` workflows are **independent**:
+- Both trigger on `push: tags: - 'v*'`
+- They run in **parallel**, not sequentially
+- The release workflow has **no dependency** on the validation workflow
+- Even though validation failed, the release proceeded and succeeded
+
+**Validation Workflow (from `.github/workflows/validate-version.yml`):**
+```yaml
+on:
+  push:
+    tags:
+      - 'v*'
+```
+
+**Expected Output from Failed Validation:**
+```
+❌ ERROR: Version mismatch detected!
+
+The version in package.json (2.7.0) does not match
+the git tag version (2.7.1).
+
+To fix this:
+  1. Delete this tag: git tag -d v2.7.1
+  2. Update package.json version to 2.7.1
+  3. Commit the change
+  4. Recreate the tag: git tag -a v2.7.1 -m 'Release v2.7.1'
+```
+
+---
+
+#### Workflow Architecture Issue
+
+```
+Tag Push (v2.7.1)
+       │
+       ├──────────────────────────────────┐
+       │                                  │
+       ▼                                  ▼
+┌──────────────────┐            ┌──────────────────┐
+│  validate-version │            │     release      │
+│    ❌ FAILED      │            │   ✅ SUCCESS     │
+│ (detected error)  │  ← No    │  (built wrong     │
+│                   │   link →  │   version)        │
+└──────────────────┘            └──────────────────┘
+```
+
+**Problem:** The validation workflow runs but cannot **block** the release workflow.
+
+---
+
+#### Other v2.7.1 Workflows
+
+| Workflow | Run ID | Conclusion | Notes |
+|----------|--------|------------|-------|
+| Release | 20433472030 | ✅ success | Built and released v2.7.0 files |
+| Validate Version | 20433472034 | ❌ failure | Detected mismatch but couldn't stop release |
+| Discord Release Notification | 20433472029 | ✅ success | Notified Discord about "v2.7.1" |
+| Test on Tag | 20433472046 | ✅ success | Tests passed |
+| Build Native Module Prebuilds | 20433472017 | ❌ failure | Separate prebuilt module issue |
+
+---
+
+#### Root Cause Confirmation
+
+The GitHub Actions analysis confirms:
+
+1. **The release workflow worked correctly** - it built exactly what was in the source code at the tagged commit
+2. **The validation workflow detected the problem** - it correctly identified the version mismatch
+3. **The workflows are not connected** - validation failure could not prevent the release
+4. **The artifacts are from the right commit but wrong version** - v2.7.1 release contains v2.7.0 artifacts because that's what package.json said at commit `772a5006`
+
+---
+
 ## Next Steps
 
 1. ~~**Subtask 1-1:** Verify v2.7.1 assets~~ ✅ Complete
 2. ~~**Subtask 1-2:** Compare with v2.7.0 release and verify expected naming pattern~~ ✅ Complete
 3. ~~**Subtask 1-3:** Check package.json version and git state~~ ✅ Complete - ROOT CAUSE IDENTIFIED
 4. ~~**Subtask 2-1:** Inspect v2.7.1 git tag and commit~~ ✅ Complete - TAG/COMMIT MISMATCH CONFIRMED
-5. **Subtask 2-2:** Check release workflow runs (investigate workflow execution)
-6. **Phase 3:** Implement fix (re-upload correct files or publish v2.7.2)
-7. **Phase 4:** Add validation to prevent future occurrences
+5. ~~**Subtask 2-2:** Check release workflow runs~~ ✅ Complete - VALIDATION DETECTED BUT COULDN'T STOP RELEASE
+6. **Subtask 2-3:** Document fix options
+7. **Phase 3:** Implement fix (re-upload correct files or publish v2.7.2)
+8. **Phase 4:** Add validation to prevent future occurrences
 
 ---
 
-## Status: Phase 2 In Progress - Subtask 2-1 Complete
+## Status: Phase 2 In Progress - Subtask 2-2 Complete
 
-**Root Cause:** The v2.7.1 tag was created on commit `772a5006` which still had `package.json` version `2.7.0`. The version was only bumped to `2.7.1` in a subsequent commit `8db71f3d`, but by then the release workflow had already run with the old version.
+**Root Cause:** The v2.7.1 tag was created on commit `772a5006` which still had `package.json` version `2.7.0`. The validation workflow detected this but couldn't stop the release workflow.
+
+**Key Findings from Workflow Analysis:**
+- Release workflow (ID: 20433472030): ✅ Success - correctly built from tagged commit
+- Validate Version workflow (ID: 20433472034): ❌ Failed - correctly detected version mismatch
+- The workflows run in parallel with no dependency relationship
 
 **Recommended Fix:**
-1. Delete the v2.7.1 tag
+1. Delete the v2.7.1 tag and release
 2. Move the tag to a commit where package.json has version 2.7.1
 3. Re-trigger the release workflow, OR
 4. Mark v2.7.1 as deprecated and release v2.7.2 with correct versioning
 
 **Process Improvement Needed:**
 - Version bump should ALWAYS happen BEFORE tagging
-- Add CI validation to ensure tag version matches package.json version
+- **Make release.yml depend on validate-version.yml** using `needs:` or combine them
+- Consider using a reusable workflow or job dependency to enforce validation
