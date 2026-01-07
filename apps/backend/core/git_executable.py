@@ -12,7 +12,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-
 _cached_git_path: str | None = None
 
 

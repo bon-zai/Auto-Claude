@@ -10,9 +10,6 @@ import json
 import subprocess
 from pathlib import Path
 
-# Re-export git executable functions from core.git_executable
-from core.git_executable import get_git_executable, run_git
-
 # Constants for merge limits
 MAX_FILE_LINES_FOR_AI = 5000  # Skip AI for files larger than this
 MAX_PARALLEL_AI_MERGES = 5  # Limit concurrent AI merge operations
