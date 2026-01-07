@@ -23,6 +23,7 @@ Desktop.ini
 .secrets
 secrets/
 credentials/
+/config.json
 
 # ===========================
 # IDE & Editors
