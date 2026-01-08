@@ -215,11 +215,59 @@
         }
       ],
       "status": "completed"
+    },
+    "subtask-4-2": {
+      "attempts": [
+        {
+          "session": 19,
+          "timestamp": "2026-01-09T00:30:51.089600",
+          "approach": "Implemented: Create AutoPRReviewProgressCard.tsx component with progress bar, substep indicator, CI checks visual",
+          "success": true,
+          "error": null
+        }
+      ],
+      "status": "completed"
+    },
+    "subtask-4-3": {
+      "attempts": [
+        {
+          "session": 20,
+          "timestamp": "2026-01-09T00:34:26.893759",
+          "approach": "Implemented: Add Auto-PR-Review toggle to IssueListHeader.tsx next to Auto-Fix toggle with dependency warning",
+          "success": true,
+          "error": null
+        }
+      ],
+      "status": "completed"
+    },
+    "subtask-4-4": {
+      "attempts": [
+        {
+          "session": 21,
+          "timestamp": "2026-01-09T00:36:08.630051",
+          "approach": "Implemented: Add English i18n keys for Auto-PR-Review feature in github.json (title, tooltip, status, messages, e",
+          "success": true,
+          "error": null
+        }
+      ],
+      "status": "completed"
+    },
+    "subtask-4-5": {
+      "attempts": [
+        {
+          "session": 22,
+          "timestamp": "2026-01-09T00:37:19.956107",
+          "approach": "Implemented: Add French i18n keys for Auto-PR-Review feature in github.json",
+          "success": true,
+          "error": null
+        }
+      ],
+      "status": "completed"
     }
   },
   "stuck_subtasks": [],
   "metadata": {
     "created_at": "2026-01-08T23:13:05.887534",
-    "last_updated": "2026-01-09T00:27:57.223655"
+    "last_updated": "2026-01-09T00:37:19.956133"
   }
 }
