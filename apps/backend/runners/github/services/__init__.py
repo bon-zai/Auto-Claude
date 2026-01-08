@@ -5,6 +5,15 @@ GitHub Orchestrator Services
 Service layer for GitHub automation workflows.
 """
 
+from .auto_pr_review_orchestrator import (
+    AutoPRReviewOrchestrator,
+    OrchestratorCancelledError,
+    OrchestratorResult,
+    OrchestratorRunResult,
+    OrchestratorUnauthorizedError,
+    get_auto_pr_review_orchestrator,
+    reset_auto_pr_review_orchestrator,
+)
 from .autofix_processor import AutoFixProcessor
 from .batch_processor import BatchProcessor
 from .bot_verifier import (
@@ -26,16 +35,27 @@ from .response_parsers import ResponseParser
 from .triage_engine import TriageEngine
 
 __all__ = [
+    # Auto PR Review Orchestrator
+    "AutoPRReviewOrchestrator",
+    "OrchestratorResult",
+    "OrchestratorRunResult",
+    "OrchestratorCancelledError",
+    "OrchestratorUnauthorizedError",
+    "get_auto_pr_review_orchestrator",
+    "reset_auto_pr_review_orchestrator",
+    # Core Services
     "PromptManager",
     "ResponseParser",
     "PRReviewEngine",
     "TriageEngine",
     "AutoFixProcessor",
     "BatchProcessor",
+    # Bot Verifier
     "BotVerifier",
     "get_bot_verifier",
     "is_trusted_bot",
     "require_trusted_bot",
+    # PR Check Waiter
     "PRCheckWaiter",
     "WaitForChecksResult",
     "WaitResult",
