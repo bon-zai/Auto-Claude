@@ -922,8 +922,10 @@ export function registerAutoFixHandlers(
 
   /**
    * Load persisted auto-PR review states on startup.
-   * This restores the in-memory state from disk so that active reviews
-   * are visible in the UI after app restart.
+   *
+   * NOTE: After app restart, there are no running subprocesses, so persisted states
+   * are "stale" - they represent reviews that were running before restart.
+   * We load them briefly to show the user what was happening, then clean them up.
    */
   function loadPersistedAutoPRReviewStates(): void {
     const project = findProjectForAutoPRReview();
@@ -940,8 +942,12 @@ export function registerAutoFixHandlers(
       const reviews = indexData.reviews || [];
 
       for (const entry of reviews) {
-        // Only load active (non-terminal) states
-        const terminalStatuses = ['completed', 'failed', 'cancelled', 'max_iterations', 'ready_to_merge'];
+        // Skip all terminal states - only load states that were "in progress"
+        const terminalStatuses = [
+          'completed', 'failed', 'cancelled', 'max_iterations',
+          'ready_to_merge', 'pr_ready_to_merge',
+          'needs_human_review', 'awaiting_changes'
+        ];
         if (terminalStatuses.includes(entry.status)) {
           continue;
         }
@@ -975,7 +981,7 @@ export function registerAutoFixHandlers(
             fixedFindingsCount: stateData.resolved_finding_ids?.length || 0,
             remainingFindingsCount: stateData.pending_finding_ids?.length || 0,
             isCancellable: false, // Recovered states are not cancellable (no subprocess)
-            currentActivity: 'Recovered from previous session - restart review to continue',
+            currentActivity: 'Review interrupted - restart to continue',
           };
 
           activeAutoPRReviews.set(key, {
@@ -988,6 +994,19 @@ export function registerAutoFixHandlers(
             status: progress.status,
             iteration: progress.currentIteration,
           });
+
+          // Auto-cleanup stale recovered states after 30 seconds
+          // They're not actually running, so clean up to avoid confusing the UI
+          setTimeout(() => {
+            if (activeAutoPRReviews.has(key)) {
+              const current = activeAutoPRReviews.get(key);
+              // Only clean up if it hasn't been restarted (still showing as recovered)
+              if (current?.progress.currentActivity === 'Review interrupted - restart to continue') {
+                debugLog('Cleaning up stale recovered Auto-PR-Review state', { key });
+                activeAutoPRReviews.delete(key);
+              }
+            }
+          }, 30000);
         } catch {
           // Skip invalid state files
         }

@@ -460,6 +460,12 @@ export function useAutoPRReview(options?: {
     };
   }, [loadConfig]);
 
+  // Track active reviews in a ref to avoid dependency cycle
+  const activeReviewsRef = useRef<AutoPRReviewProgress[]>([]);
+  useEffect(() => {
+    activeReviewsRef.current = activeReviews;
+  }, [activeReviews]);
+
   // Set up status polling
   useEffect(() => {
     if (!autoRefresh || !hasAPI) return;
@@ -472,7 +478,7 @@ export function useAutoPRReview(options?: {
     pollIntervalRef.current = setInterval(() => {
       // Skip polling if no reviews are being tracked and no active reviews in state
       const hasTrackedReviews = trackedReviewsRef.current.size > 0;
-      const hasActiveReviews = activeReviews.some(r => isInProgressStatus(r.status));
+      const hasActiveReviews = activeReviewsRef.current.some(r => isInProgressStatus(r.status));
 
       if (hasTrackedReviews || hasActiveReviews) {
         refreshStatus();
@@ -485,7 +491,7 @@ export function useAutoPRReview(options?: {
         pollIntervalRef.current = null;
       }
     };
-  }, [autoRefresh, pollInterval, refreshStatus, hasAPI, activeReviews]);
+  }, [autoRefresh, pollInterval, refreshStatus, hasAPI]);
 
   // Listen for cross-instance state change events
   // This allows immediate sync when a review is started/stopped from another hook instance
