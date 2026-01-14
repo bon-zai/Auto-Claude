@@ -4,6 +4,14 @@ Defines all custom exceptions used by the methodologies/plugin system.
 Following architecture-defined patterns from Error-Handling-Patterns.
 """
 
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass  # No additional type imports needed
+
 
 class AutoClaudeError(Exception):
     """Base exception for all Auto Claude errors.
@@ -33,9 +41,26 @@ class ManifestValidationError(PluginError):
     - Field values have incorrect types
     - Schema validation fails
     - Version constraints cannot be satisfied
+
+    Attributes:
+        path: Path to the invalid manifest file
+        errors: List of validation error messages
     """
 
-    pass
+    def __init__(self, path: Path | str, errors: list[str]) -> None:
+        """Initialize with manifest path and error details.
+
+        Args:
+            path: Path to the invalid manifest file
+            errors: List of validation error messages
+        """
+        self.path: Path = path if isinstance(path, Path) else Path(path)
+        self.errors: list[str] = errors
+        if errors:
+            error_summary = "\n  - " + "\n  - ".join(errors)
+        else:
+            error_summary = " (no details)"
+        super().__init__(f"Invalid manifest at {path}:{error_summary}")
 
 
 class PluginLoadError(PluginError):

@@ -279,6 +279,7 @@ class TestExceptionHierarchy:
 
     def test_exceptions_are_instantiable_with_message(self):
         """Test that all exceptions can be instantiated with a message."""
+        from pathlib import Path
         from apps.backend.methodologies.exceptions import (
             PluginError,
             ManifestValidationError,
@@ -291,8 +292,13 @@ class TestExceptionHierarchy:
         e1 = PluginError(msg)
         assert str(e1) == msg
 
-        e2 = ManifestValidationError(msg)
-        assert str(e2) == msg
+        # ManifestValidationError now requires path and errors list
+        test_path = Path("/test/manifest.yaml")
+        e2 = ManifestValidationError(test_path, [msg])
+        assert msg in str(e2)
+        assert str(test_path) in str(e2)
+        assert e2.path == test_path
+        assert e2.errors == [msg]
 
         e3 = PluginLoadError(msg)
         assert str(e3) == msg
@@ -533,7 +539,8 @@ class TestNegativeAndEdgeCases:
     """Test negative scenarios and edge cases."""
 
     def test_exception_with_no_message(self):
-        """Test exceptions can be instantiated without a message."""
+        """Test exceptions can be instantiated without a message (except ManifestValidationError)."""
+        from pathlib import Path
         from apps.backend.methodologies.exceptions import (
             PluginError,
             ManifestValidationError,
@@ -544,8 +551,10 @@ class TestNegativeAndEdgeCases:
         e1 = PluginError()
         assert str(e1) == ""
 
-        e2 = ManifestValidationError()
-        assert str(e2) == ""
+        # ManifestValidationError requires path and errors - test with empty errors
+        test_path = Path("/test/manifest.yaml")
+        e2 = ManifestValidationError(test_path, [])
+        assert str(test_path) in str(e2)
 
         e3 = PluginLoadError()
         assert str(e3) == ""
@@ -562,24 +571,27 @@ class TestNegativeAndEdgeCases:
 
     def test_exception_can_be_raised_and_caught(self):
         """Test exceptions can be raised and caught properly."""
+        from pathlib import Path
         from apps.backend.methodologies.exceptions import (
             AutoClaudeError,
             PluginError,
             ManifestValidationError,
         )
 
+        test_path = Path("/test/manifest.yaml")
+
         # Catch specific exception
         with pytest.raises(ManifestValidationError) as exc_info:
-            raise ManifestValidationError("Invalid manifest")
+            raise ManifestValidationError(test_path, ["Invalid manifest"])
         assert "Invalid manifest" in str(exc_info.value)
 
         # Catch parent exception
         with pytest.raises(PluginError):
-            raise ManifestValidationError("Caught as PluginError")
+            raise ManifestValidationError(test_path, ["Caught as PluginError"])
 
         # Catch grandparent exception
         with pytest.raises(AutoClaudeError):
-            raise ManifestValidationError("Caught as AutoClaudeError")
+            raise ManifestValidationError(test_path, ["Caught as AutoClaudeError"])
 
     def test_phase_result_with_failure(self):
         """Test PhaseResult can represent failure state."""
