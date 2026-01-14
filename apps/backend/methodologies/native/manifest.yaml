@@ -1,0 +1,73 @@
+name: native
+version: "1.0.0"
+description: "Native Auto Claude methodology - fast, focused task execution"
+author: "Auto Claude Team"
+entry_point: methodology.NativeRunner
+
+phases:
+  - id: discovery
+    name: "Discovery"
+    description: "Gather project context and user requirements"
+    artifacts:
+      - requirements-json
+  - id: requirements
+    name: "Requirements"
+    description: "Structure and validate requirements"
+    artifacts:
+      - requirements-json
+  - id: context
+    name: "Context"
+    description: "Build codebase context for implementation"
+    artifacts:
+      - context-json
+  - id: spec
+    name: "Specification"
+    description: "Generate specification document"
+    artifacts:
+      - spec-md
+  - id: plan
+    name: "Planning"
+    description: "Create implementation plan with subtasks"
+    artifacts:
+      - implementation-plan-json
+  - id: validate
+    name: "Validation"
+    description: "Validate spec completeness"
+
+checkpoints:
+  - id: after_planning
+    phase: plan
+    description: "Review implementation plan before coding"
+  - id: after_spec
+    phase: spec
+    description: "Review specification before planning"
+  - id: after_validation
+    phase: validate
+    description: "Review validation results before completion"
+
+artifacts:
+  - id: requirements-json
+    name: "Requirements"
+    type: json
+    path: "requirements.json"
+  - id: context-json
+    name: "Context"
+    type: json
+    path: "context.json"
+  - id: spec-md
+    name: "Specification"
+    type: markdown
+    path: "spec.md"
+  - id: implementation-plan-json
+    name: "Implementation Plan"
+    type: json
+    path: "implementation_plan.json"
+
+complexity_levels:
+  - quick
+  - standard
+  - complex
+
+execution_modes:
+  - full_auto
+  - semi_auto
