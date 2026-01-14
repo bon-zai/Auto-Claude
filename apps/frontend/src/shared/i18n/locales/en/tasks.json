@@ -240,5 +240,20 @@
   },
   "subtasks": {
     "untitled": "Untitled subtask"
+  },
+  "executionMode": {
+    "fullAuto": {
+      "title": "Full Auto",
+      "description": "Tasks run autonomously without interruption. The AI handles planning, coding, and validation automatically."
+    },
+    "semiAuto": {
+      "title": "Semi-Auto",
+      "description": "Review and approve at key checkpoints.",
+      "checkpoints": {
+        "planning": "After planning - Review the implementation plan",
+        "coding": "After coding - Review the implemented code",
+        "validation": "After validation - Review QA results"
+      }
+    }
   }
 }

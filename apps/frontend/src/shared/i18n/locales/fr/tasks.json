@@ -240,5 +240,20 @@
   },
   "subtasks": {
     "untitled": "Sous-tâche sans titre"
+  },
+  "executionMode": {
+    "fullAuto": {
+      "title": "Auto complet",
+      "description": "Les tâches s'exécutent de manière autonome sans interruption. L'IA gère automatiquement la planification, le codage et la validation."
+    },
+    "semiAuto": {
+      "title": "Semi-Auto",
+      "description": "Révisez et approuvez aux points de contrôle clés.",
+      "checkpoints": {
+        "planning": "Après la planification - Révisez le plan d'implémentation",
+        "coding": "Après le codage - Révisez le code implémenté",
+        "validation": "Après la validation - Révisez les résultats QA"
+      }
+    }
   }
 }

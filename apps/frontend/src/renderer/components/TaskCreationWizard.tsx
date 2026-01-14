@@ -24,6 +24,7 @@ import {
 } from './ui/select';
 import { TaskModalLayout } from './task-form/TaskModalLayout';
 import { TaskFormFields } from './task-form/TaskFormFields';
+import { ExecutionModeTabs, type ExecutionMode } from './task-form/ExecutionModeTabs';
 import { TaskFileExplorerDrawer } from './TaskFileExplorerDrawer';
 import { FileAutocomplete } from './FileAutocomplete';
 import { createTask, saveDraft, loadDraft, clearDraft, isDraftEmpty } from '../stores/task-store';
@@ -106,6 +107,9 @@ export function TaskCreationWizard({
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
 
+  // Execution mode - default to full_auto
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('full_auto');
+
   // Draft state
   const [isDraftRestored, setIsDraftRestored] = useState(false);
 
@@ -137,6 +141,7 @@ export function TaskCreationWizard({
         setImages(draft.images);
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
+        setExecutionMode(draft.executionMode ?? 'full_auto');
         setIsDraftRestored(true);
 
         if (draft.category || draft.priority || draft.complexity || draft.impact) {
@@ -218,8 +223,9 @@ export function TaskCreationWizard({
     images,
     referencedFiles,
     requireReviewBeforeCoding,
+    executionMode,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, executionMode]);
 
   /**
    * Detect @ mention being typed and show autocomplete
@@ -348,6 +354,8 @@ export function TaskCreationWizard({
       if (images.length > 0) metadata.attachedImages = images;
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
       if (requireReviewBeforeCoding) metadata.requireReviewBeforeCoding = true;
+      // Always include execution mode - it determines checkpoint behavior
+      metadata.executionMode = executionMode;
       // Always include baseBranch - resolve PROJECT_DEFAULT_BRANCH to actual branch name
       // This ensures the backend always knows which branch to use for worktree creation
       if (baseBranch === PROJECT_DEFAULT_BRANCH) {
@@ -389,6 +397,7 @@ export function TaskCreationWizard({
     setImages([]);
     setReferencedFiles([]);
     setRequireReviewBeforeCoding(false);
+    setExecutionMode('full_auto');
     setBaseBranch(PROJECT_DEFAULT_BRANCH);
     setUseWorktree(true);
     setError(null);
@@ -521,6 +530,13 @@ export function TaskCreationWizard({
       }
     >
       <div className="space-y-6">
+        {/* Execution Mode Tabs - Full Auto vs Semi-Auto */}
+        <ExecutionModeTabs
+          value={executionMode}
+          onChange={setExecutionMode}
+          disabled={isCreating}
+        />
+
         {/* Worktree isolation info banner */}
         <div className="flex items-start gap-3 p-4 bg-info/10 border border-info/30 rounded-lg">
           <Info className="h-5 w-5 text-info flex-shrink-0 mt-0.5" />

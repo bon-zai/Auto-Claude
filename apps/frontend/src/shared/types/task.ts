@@ -151,8 +151,12 @@ export interface TaskDraft {
   images: ImageAttachment[];
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
+  executionMode?: ExecutionMode;
   savedAt: Date;
 }
+
+// Execution mode for task execution
+export type ExecutionMode = 'full_auto' | 'semi_auto';
 
 // Task metadata from ideation or manual entry
 export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex';
@@ -221,6 +225,9 @@ export interface TaskMetadata {
 
   // Review settings
   requireReviewBeforeCoding?: boolean;  // Require human review of spec/plan before coding starts
+
+  // Execution mode
+  executionMode?: ExecutionMode;  // Full auto (no interruption) or semi-auto (checkpoints)
 
   // Agent configuration (from agent profile or manual selection)
   model?: ModelType;  // Claude model to use (haiku, sonnet, opus) - used when not auto profile
