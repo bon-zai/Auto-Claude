@@ -1842,7 +1842,8 @@ class TestLoopTermination:
                     with patch.object(executor, "_run_qa_fixer", side_effect=mock_fixer):
                         result = await executor.execute_validation_phase(max_iterations=3)
 
-            assert result["status"] == "failed"
+            # Story 4.5: Max iterations now triggers escalation instead of simple failure
+            assert result["status"] == "escalated"
             assert result["iterations"] == 3
             assert "3 iterations" in result.get("error", "")
 
@@ -1903,8 +1904,8 @@ class TestValidationStateUpdate:
             assert result["status"] == "completed"
 
     @pytest.mark.asyncio
-    async def test_failed_validation_sets_failed_state(self, executor):
-        """Test that failed validation updates state to FAILED."""
+    async def test_failed_validation_sets_escalated_state(self, executor):
+        """Test that failed validation updates state to ESCALATED (Story 4.5)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             executor._spec_dir = Path(tmpdir)
             executor._task_dir = Path(tmpdir)
@@ -1932,8 +1933,9 @@ class TestValidationStateUpdate:
 
             from apps.backend.core.executors.full_auto import TaskState
 
+            # Story 4.5: Max iterations now triggers escalation instead of simple failure
             state = executor.get_task_state()
-            assert state == TaskState.FAILED.value
+            assert state == TaskState.ESCALATED.value
 
 
 class TestValidationProgressReporting:
@@ -2015,8 +2017,8 @@ class TestValidationEdgeCases:
                     with patch.object(executor, "_run_qa_fixer", side_effect=mock_fixer):
                         result = await executor.execute_validation_phase(max_iterations=3)
 
-            # Should fail because tests failed
-            assert result["status"] == "failed"
+            # Should escalate because tests failed after max iterations
+            assert result["status"] == "escalated"
 
     @pytest.mark.asyncio
     async def test_empty_issues_list_treated_as_pass(self, executor):

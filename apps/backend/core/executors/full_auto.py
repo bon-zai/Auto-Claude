@@ -30,6 +30,11 @@ try:
 except ImportError:
     HAS_FCNTL = False
 
+# Story 4.5: Import escalation module for handling tasks that need attention
+from apps.backend.core.escalation import (
+    EscalationReason,
+    escalate_task,
+)
 from apps.backend.methodologies.protocols import (
     MethodologyRunner,
     Phase,
@@ -1146,11 +1151,26 @@ class FullAutoExecutor:
                 )
                 await asyncio.sleep(backoff)
 
-        # All retries exhausted - escalate
+        # All retries exhausted - escalate (Story 4.5)
+        subtask_id = subtask.get("id", "unknown")
         self._log_error(
-            f"Subtask {subtask.get('id')} failed after {max_retries} attempts: {last_error}",
+            f"Subtask {subtask_id} failed after {max_retries} attempts: {last_error}",
             phase_id="coding",
         )
+
+        # Story 4.5: Save escalation details and emit notification
+        if self._task_dir:
+            escalate_task(
+                task_dir=self._task_dir,
+                reason=EscalationReason.MAX_RETRIES_EXCEEDED,
+                failed_phase="coding",
+                error=last_error or "Unknown error",
+                attempted_fixes=[recovery_context] if recovery_context else [],
+                context={"subtask": subtask, "attempts": max_retries},
+                subtask_id=subtask_id,
+                task_id=self.task_config.task_id,
+            )
+
         self.update_task_state(TaskState.ESCALATED)
 
         return {
@@ -1253,12 +1273,30 @@ class FullAutoExecutor:
                     "test_results": test_results,
                 }
 
-            # Check if issues are fixable
+            # Check if issues are fixable (Story 4.5)
             if not qa_result.get("fixable", True):
                 self._log_error(
                     "Issues are not auto-fixable, escalating to human",
                     phase_id="validation",
                 )
+
+                # Story 4.5: Save escalation details and emit notification
+                issues = qa_result.get("issues", [])
+                if self._task_dir:
+                    escalate_task(
+                        task_dir=self._task_dir,
+                        reason=EscalationReason.UNFIXABLE_QA_ISSUES,
+                        failed_phase="validation",
+                        error="QA found issues that cannot be automatically fixed",
+                        attempted_fixes=[],
+                        context={
+                            "issues": issues,
+                            "iteration": iteration,
+                            "qa_result": qa_result,
+                        },
+                        iteration=iteration,
+                        task_id=self.task_config.task_id,
+                    )
 
                 self.update_task_state(TaskState.ESCALATED)
 
@@ -1305,13 +1343,29 @@ class FullAutoExecutor:
 
             await self._run_qa_fixer(issues, iteration)
 
-        # Max iterations reached without passing
+        # Max iterations reached without passing (Story 4.5)
         self._log_error(
             f"Validation failed after {max_iterations} iterations",
             phase_id="validation",
         )
 
-        self.update_task_state(TaskState.FAILED)
+        # Story 4.5: Save escalation details for max iterations failure
+        if self._task_dir:
+            escalate_task(
+                task_dir=self._task_dir,
+                reason=EscalationReason.VALIDATION_FAILED,
+                failed_phase="validation",
+                error=f"Validation failed after {max_iterations} iterations",
+                attempted_fixes=[],
+                context={
+                    "max_iterations": max_iterations,
+                    "test_results": test_results,
+                },
+                iteration=max_iterations,
+                task_id=self.task_config.task_id,
+            )
+
+        self.update_task_state(TaskState.ESCALATED)
 
         self._emit_progress_event(
             phase_id="validation",
@@ -1323,7 +1377,7 @@ class FullAutoExecutor:
         )
 
         return {
-            "status": "failed",
+            "status": "escalated",
             "iterations": max_iterations,
             "qa_report_path": qa_report_path,
             "test_results": test_results,

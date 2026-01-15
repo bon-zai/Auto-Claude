@@ -77,6 +77,8 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [expandedPhases, setExpandedPhases] = useState<Set<TaskLogPhase>>(new Set());
   const [isLoadingPlan, setIsLoadingPlan] = useState(false);
+  // Story 4.5: Escalation handling state
+  const [isRetryingEscalation, setIsRetryingEscalation] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
@@ -97,6 +99,8 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   // isActiveTask includes ai_review for stuck detection (CHANGELOG documents this feature)
   const isActiveTask = task.status === 'in_progress' || task.status === 'ai_review';
   const needsReview = task.status === 'human_review';
+  // Story 4.5: Check if task is escalated and needs attention
+  const isEscalated = !!task.escalationInfo;
   const executionPhase = task.executionProgress?.phase;
   const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed';
   const isIncomplete = isIncompleteHumanReview(task);
@@ -353,6 +357,34 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   // This improves modal open performance significantly (avoids 1-30+ second Python subprocess).
 
   /**
+   * Story 4.5: Retry escalated task with optional user guidance.
+   * AC #7: Pass guidance to backend for retry.
+   */
+  const retryWithGuidance = useCallback(async (guidance?: string): Promise<boolean> => {
+    if (!task.escalationInfo) {
+      console.warn('[retryWithGuidance] No escalation info found');
+      return false;
+    }
+
+    setIsRetryingEscalation(true);
+    try {
+      const result = await window.electronAPI.retryEscalatedTask(task.id, guidance);
+      if (result.success) {
+        console.log('[retryWithGuidance] Successfully restarted task with guidance');
+        return true;
+      } else {
+        console.error('[retryWithGuidance] Failed to retry:', result.error);
+        return false;
+      }
+    } catch (err) {
+      console.error('[retryWithGuidance] Error retrying escalated task:', err);
+      return false;
+    } finally {
+      setIsRetryingEscalation(false);
+    }
+  }, [task.id, task.escalationInfo]);
+
+  /**
    * Reloads implementation plan for an incomplete task to ensure subtasks are properly loaded.
    * This prevents the "Task Incomplete" infinite loop when resuming stuck tasks.
    */
@@ -471,6 +503,9 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     showPRDialog,
     isCreatingPR,
     isLoadingPlan,
+    // Story 4.5: Escalation state
+    isEscalated,
+    isRetryingEscalation,
 
     // Setters
     setFeedback,
@@ -516,5 +551,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     clearFeedbackImages,
     handleReviewAgain,
     reloadPlanForIncompleteTask,
+    // Story 4.5: Escalation handlers
+    retryWithGuidance,
   };
 }

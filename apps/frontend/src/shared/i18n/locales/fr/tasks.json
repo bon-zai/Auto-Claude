@@ -19,7 +19,13 @@
     "view": "Voir les détails",
     "viewPR": "Voir la PR",
     "moveTo": "Déplacer vers",
-    "taskActions": "Actions de la tâche"
+    "taskActions": "Actions de la tâche",
+    "startTask": "Démarrer la tâche",
+    "stopTask": "Arrêter la tâche",
+    "recoverTask": "Récupérer la tâche",
+    "resumeTask": "Reprendre la tâche",
+    "recovering": "Récupération...",
+    "loadingPlan": "Chargement du plan..."
   },
   "labels": {
     "running": "En cours",
@@ -240,6 +246,28 @@
   },
   "subtasks": {
     "untitled": "Sous-tâche sans titre"
+  },
+  "escalation": {
+    "title": "La tâche nécessite votre attention",
+    "failedDuring": "Échec pendant",
+    "subtask": "Sous-tâche",
+    "showDetails": "Afficher les détails techniques",
+    "attemptedFixes": "Corrections tentées",
+    "stackTrace": "Trace de la pile",
+    "context": "Contexte",
+    "guidanceLabel": "Fournir des conseils (optionnel)",
+    "guidancePlaceholder": "Décrivez ce que l'IA devrait essayer différemment, fournissez des indices sur la solution ou suggérez une approche spécifique...",
+    "guidanceHint": "Vos conseils seront inclus dans la demande de réessai pour aider l'IA à réussir.",
+    "retry": "Réessayer la tâche",
+    "retryWithGuidance": "Réessayer avec les conseils",
+    "reasons": {
+      "maxRetriesExceeded": "La tâche a échoué après plusieurs tentatives.",
+      "unfixableQaIssues": "La validation QA a trouvé des problèmes qui n'ont pas pu être corrigés automatiquement.",
+      "externalServiceFailure": "Un service externe requis par la tâche a échoué ou n'est pas disponible.",
+      "userDefined": "Une condition d'escalade personnalisée a été déclenchée.",
+      "validationFailed": "La phase de validation a échoué après le nombre maximum d'itérations.",
+      "unknown": "La tâche a rencontré une erreur inattendue."
+    }
   },
   "executionMode": {
     "fullAuto": {

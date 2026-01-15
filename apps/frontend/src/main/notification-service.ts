@@ -2,7 +2,7 @@ import { Notification, shell } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { projectStore } from './project-store';
 
-export type NotificationType = 'task-complete' | 'task-failed' | 'review-needed';
+export type NotificationType = 'task-complete' | 'task-failed' | 'review-needed' | 'task-escalated';
 
 interface NotificationOptions {
   title: string;
@@ -55,6 +55,28 @@ class NotificationService {
     this.sendNotification('review-needed', {
       title: 'Review Needed',
       body: `"${taskTitle}" is ready for your review`,
+      projectId,
+      taskId
+    });
+  }
+
+  /**
+   * Send a notification when a task is escalated and needs attention
+   * Story Reference: Story 4.5 Task 3 - Include task title and error summary
+   */
+  notifyTaskEscalated(
+    taskTitle: string,
+    projectId: string,
+    taskId: string,
+    errorSummary?: string
+  ): void {
+    const body = errorSummary
+      ? `"${taskTitle}" needs attention: ${errorSummary}`
+      : `"${taskTitle}" could not complete and needs your attention`;
+
+    this.sendNotification('task-escalated', {
+      title: 'Task Needs Attention',
+      body,
       projectId,
       taskId
     });
@@ -115,6 +137,7 @@ class NotificationService {
     onTaskComplete: boolean;
     onTaskFailed: boolean;
     onReviewNeeded: boolean;
+    onTaskEscalated: boolean;
     sound: boolean;
   } {
     // Try to get project-specific settings
@@ -122,7 +145,11 @@ class NotificationService {
       const projects = projectStore.getProjects();
       const project = projects.find(p => p.id === projectId);
       if (project?.settings?.notifications) {
-        return project.settings.notifications;
+        // Handle optional onTaskEscalated (backward compatibility)
+        return {
+          ...project.settings.notifications,
+          onTaskEscalated: project.settings.notifications.onTaskEscalated ?? true,
+        };
       }
     }
 
@@ -131,6 +158,7 @@ class NotificationService {
       onTaskComplete: true,
       onTaskFailed: true,
       onReviewNeeded: true,
+      onTaskEscalated: true,
       sound: false
     };
   }
@@ -144,6 +172,7 @@ class NotificationService {
       onTaskComplete: boolean;
       onTaskFailed: boolean;
       onReviewNeeded: boolean;
+      onTaskEscalated: boolean;
       sound: boolean;
     }
   ): boolean {
@@ -154,6 +183,8 @@ class NotificationService {
         return settings.onTaskFailed;
       case 'review-needed':
         return settings.onReviewNeeded;
+      case 'task-escalated':
+        return settings.onTaskEscalated;
       default:
         return false;
     }

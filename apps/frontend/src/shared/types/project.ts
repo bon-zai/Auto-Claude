@@ -32,6 +32,8 @@ export interface NotificationSettings {
   onTaskComplete: boolean;
   onTaskFailed: boolean;
   onReviewNeeded: boolean;
+  /** Notify when a task is escalated and needs user attention (Story 4.5) */
+  onTaskEscalated?: boolean;
   sound: boolean;
 }
 

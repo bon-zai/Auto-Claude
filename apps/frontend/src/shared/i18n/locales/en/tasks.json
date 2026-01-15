@@ -19,7 +19,13 @@
     "view": "View Details",
     "viewPR": "View PR",
     "moveTo": "Move to",
-    "taskActions": "Task actions"
+    "taskActions": "Task actions",
+    "startTask": "Start Task",
+    "stopTask": "Stop Task",
+    "recoverTask": "Recover Task",
+    "resumeTask": "Resume Task",
+    "recovering": "Recovering...",
+    "loadingPlan": "Loading Plan..."
   },
   "labels": {
     "running": "Running",
@@ -240,6 +246,28 @@
   },
   "subtasks": {
     "untitled": "Untitled subtask"
+  },
+  "escalation": {
+    "title": "Task Needs Your Attention",
+    "failedDuring": "Failed during",
+    "subtask": "Subtask",
+    "showDetails": "Show technical details",
+    "attemptedFixes": "Attempted Fixes",
+    "stackTrace": "Stack Trace",
+    "context": "Context",
+    "guidanceLabel": "Provide Guidance (optional)",
+    "guidancePlaceholder": "Describe what the AI should try differently, provide hints about the solution, or suggest a specific approach...",
+    "guidanceHint": "Your guidance will be included in the retry prompt to help the AI succeed.",
+    "retry": "Retry Task",
+    "retryWithGuidance": "Retry with Guidance",
+    "reasons": {
+      "maxRetriesExceeded": "The task failed after multiple retry attempts.",
+      "unfixableQaIssues": "QA validation found issues that couldn't be automatically fixed.",
+      "externalServiceFailure": "An external service required by the task failed or is unavailable.",
+      "userDefined": "A custom escalation condition was triggered.",
+      "validationFailed": "The validation phase failed after maximum iterations.",
+      "unknown": "The task encountered an unexpected error."
+    }
   },
   "executionMode": {
     "fullAuto": {

@@ -42,6 +42,7 @@ import { TaskSubtasks } from './TaskSubtasks';
 import { TaskLogs } from './TaskLogs';
 import { TaskFiles } from './TaskFiles';
 import { TaskReview } from './TaskReview';
+import { EscalationBanner } from './EscalationBanner';
 import type { Task, WorktreeCreatePROptions } from '../../../shared/types';
 
 interface TaskDetailModalProps {
@@ -243,12 +244,12 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
           {state.isRecovering ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Recovering...
+              {t('tasks:actions.recovering')}
             </>
           ) : (
             <>
               <RotateCcw className="mr-2 h-4 w-4" />
-              Recover Task
+              {t('tasks:actions.recoverTask')}
             </>
           )}
         </Button>
@@ -261,12 +262,12 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
           {state.isLoadingPlan ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading Plan...
+              {t('tasks:actions.loadingPlan')}
             </>
           ) : (
             <>
               <Play className="mr-2 h-4 w-4" />
-              Resume Task
+              {t('tasks:actions.resumeTask')}
             </>
           )}
         </Button>
@@ -282,12 +283,12 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
           {state.isRunning ? (
             <>
               <Square className="mr-2 h-4 w-4" />
-              Stop Task
+              {t('tasks:actions.stopTask')}
             </>
           ) : (
             <>
               <Play className="mr-2 h-4 w-4" />
-              Start Task
+              {t('tasks:actions.startTask')}
             </>
           )}
         </Button>
@@ -490,6 +491,15 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                 <TabsContent value="overview" className="flex-1 min-h-0 overflow-hidden mt-0">
                   <ScrollArea className="h-full">
                     <div className="p-5 space-y-5 overflow-x-hidden max-w-full">
+                      {/* Story 4.5: Escalation Banner - shown when task needs attention */}
+                      {state.isEscalated && task.escalationInfo && (
+                        <EscalationBanner
+                          escalationInfo={task.escalationInfo}
+                          isRetrying={state.isRetryingEscalation}
+                          onRetry={state.retryWithGuidance}
+                        />
+                      )}
+
                       {/* Metadata */}
                       <TaskMetadata task={task} />
 
