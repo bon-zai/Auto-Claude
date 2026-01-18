@@ -20,12 +20,6 @@
     "viewPR": "View PR",
     "moveTo": "Move to",
     "taskActions": "Task actions",
-    "startTask": "Start Task",
-    "stopTask": "Stop Task",
-    "recoverTask": "Recover Task",
-    "resumeTask": "Resume Task",
-    "recovering": "Recovering...",
-    "loadingPlan": "Loading Plan...",
     "selectTask": "Select task: {{title}}"
   },
   "labels": {
@@ -255,77 +249,6 @@
   },
   "subtasks": {
     "untitled": "Untitled subtask"
-  },
-  "escalation": {
-    "title": "Task Needs Your Attention",
-    "failedDuring": "Failed during",
-    "subtask": "Subtask",
-    "showDetails": "Show technical details",
-    "attemptedFixes": "Attempted Fixes",
-    "stackTrace": "Stack Trace",
-    "context": "Context",
-    "guidanceLabel": "Provide Guidance (optional)",
-    "guidancePlaceholder": "Describe what the AI should try differently, provide hints about the solution, or suggest a specific approach...",
-    "guidanceHint": "Your guidance will be included in the retry prompt to help the AI succeed.",
-    "retry": "Retry Task",
-    "retryWithGuidance": "Retry with Guidance",
-    "reasons": {
-      "maxRetriesExceeded": "The task failed after multiple retry attempts.",
-      "unfixableQaIssues": "QA validation found issues that couldn't be automatically fixed.",
-      "externalServiceFailure": "An external service required by the task failed or is unavailable.",
-      "userDefined": "A custom escalation condition was triggered.",
-      "validationFailed": "The validation phase failed after maximum iterations.",
-      "unknown": "The task encountered an unexpected error."
-    }
-  },
-  "executionMode": {
-    "fullAuto": {
-      "title": "Full Auto",
-      "description": "Tasks run autonomously without interruption. The AI handles planning, coding, and validation automatically."
-    },
-    "semiAuto": {
-      "title": "Semi-Auto",
-      "description": "Review and approve at key checkpoints.",
-      "checkpoints": {
-        "planning": "After planning - Review the implementation plan",
-        "coding": "After coding - Review the implemented code",
-        "validation": "After validation - Review QA results"
-      }
-    }
-  },
-  "executionComplexity": {
-    "label": "Task Complexity",
-    "helpText": "Choose how much planning and effort the AI should invest in this task.",
-    "auto": {
-      "label": "Auto-detect",
-      "description": "Let AI assess the task complexity"
-    },
-    "quick": {
-      "label": "Quick",
-      "description": "Simple tasks with minimal planning"
-    },
-    "standard": {
-      "label": "Standard",
-      "description": "Normal tasks with full planning"
-    },
-    "complex": {
-      "label": "Complex",
-      "description": "Large features with extensive research"
-    }
-  },
-  "methodology": {
-    "label": "Methodology",
-    "helpText": "Choose which methodology plugin to use for task execution.",
-    "placeholder": "Select methodology",
-    "loading": "Loading methodologies...",
-    "noMethodologies": "No methodologies available",
-    "verified": "Verified",
-    "unverified": "Community",
-    "unverifiedWarning": "Community plugins are not verified by the Auto Claude team. Use with caution.",
-    "badge": {
-      "native": "Native",
-      "bmad": "BMAD"
-    }
   },
   "bulkPR": {
     "selectAllInColumn": "Select all tasks in column",

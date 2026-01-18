@@ -185,11 +185,6 @@
     "comfortable": "Confortable",
     "large": "Grand"
   },
-  "methodology": {
-    "title": "Méthodologie par défaut",
-    "description": "Définissez votre méthodologie préférée pour les nouvelles tâches",
-    "settingsHelpText": "Les nouvelles tâches pré-sélectionneront cette méthodologie. Vous pouvez la modifier par tâche dans l'assistant de création."
-  },
   "general": {
     "otherAgentSettings": "Autres paramètres de l'agent",
     "otherAgentSettingsDescription": "Options de configuration supplémentaires de l'agent",
@@ -309,8 +304,6 @@
     "onTaskFailedDescription": "Notifier quand une tâche rencontre une erreur",
     "onReviewNeeded": "Révision requise",
     "onReviewNeededDescription": "Notifier quand le QA nécessite votre révision",
-    "onCheckpointReached": "Point de contrôle atteint",
-    "onCheckpointReachedDescription": "Notifier quand une tâche Semi-Auto atteint un point de contrôle nécessitant votre saisie",
     "sound": "Son",
     "soundDescription": "Jouer un son avec les notifications"
   },

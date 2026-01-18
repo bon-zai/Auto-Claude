@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import path from 'path';
-import { existsSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync } from 'fs';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
@@ -12,7 +12,6 @@ import {
   RoadmapConfig
 } from './types';
 import type { IdeationConfig } from '../../shared/types';
-import type { FeedbackAttachment } from '../../renderer/components/checkpoints/types';
 
 /**
  * Main AgentManager - orchestrates agent process lifecycle
@@ -479,96 +478,5 @@ export class AgentManager extends EventEmitter {
     }, 500);
 
     return true;
-  }
-
-  // ============================================
-  // Checkpoint Methods (Story 5.4)
-  // ============================================
-
-  /**
-   * Resume a checkpoint with the user's decision.
-   *
-   * Story 5.4: Records approval decision and signals the backend
-   * CheckpointService to resume execution.
-   *
-   * @param taskId - The task ID
-   * @param checkpointId - The checkpoint ID to resume
-   * @param decision - User's decision ('approve', 'revise', 'reject')
-   * @param feedback - Optional feedback text
-   * @param attachments - Optional file/link attachments
-   * @returns Result indicating success or failure
-   */
-  async resumeCheckpoint(
-    taskId: string,
-    checkpointId: string,
-    decision: 'approve' | 'revise' | 'reject',
-    feedback?: string,
-    attachments?: FeedbackAttachment[]
-  ): Promise<{ success: boolean; error?: string }> {
-    console.warn(`[AgentManager] resumeCheckpoint: taskId=${taskId}, checkpointId=${checkpointId}, decision=${decision}`);
-
-    // Get task context to find the spec directory
-    const context = this.taskExecutionContext.get(taskId);
-    if (!context) {
-      console.error('[AgentManager] No task context found for checkpoint resume');
-      return { success: false, error: 'Task context not found' };
-    }
-
-    // Check if task is actually running
-    if (!this.isRunning(taskId)) {
-      console.error('[AgentManager] Task is not running');
-      return { success: false, error: 'Task is not running' };
-    }
-
-    try {
-      // Write checkpoint decision to a control file that the backend CheckpointService monitors
-      // The backend will detect this file and call resume() with the decision
-      const specDir = context.specDir || path.join(context.projectPath, '.auto-claude', 'specs', context.specId);
-
-      // Ensure the spec directory exists
-      if (!existsSync(specDir)) {
-        mkdirSync(specDir, { recursive: true });
-      }
-
-      const checkpointDecisionFile = path.join(specDir, 'checkpoint_decision.json');
-
-      const decisionData = {
-        checkpoint_id: checkpointId,
-        decision,
-        feedback: feedback || null,
-        attachments: attachments?.map(a => ({
-          id: a.id,
-          type: a.type,
-          name: a.name,
-          path: a.path,
-          size: a.size,
-          mime_type: a.mimeType,
-        })) || [],
-        timestamp: new Date().toISOString(),
-      };
-
-      writeFileSync(checkpointDecisionFile, JSON.stringify(decisionData, null, 2));
-      console.warn(`[AgentManager] Wrote checkpoint decision to: ${checkpointDecisionFile}`);
-
-      return { success: true };
-    } catch (error) {
-      console.error('[AgentManager] Error writing checkpoint decision:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error writing checkpoint decision',
-      };
-    }
-  }
-
-  /**
-   * Emit a checkpoint reached event.
-   * Called by the process manager when it detects a checkpoint event in the output.
-   *
-   * @param taskId - The task ID
-   * @param checkpointInfo - The checkpoint information
-   */
-  emitCheckpointReached(taskId: string, checkpointInfo: unknown): void {
-    console.warn(`[AgentManager] emitCheckpointReached: taskId=${taskId}`);
-    this.emit('checkpoint-reached', taskId, checkpointInfo);
   }
 }

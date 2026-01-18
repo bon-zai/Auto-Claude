@@ -20,12 +20,6 @@
     "viewPR": "Voir la PR",
     "moveTo": "Déplacer vers",
     "taskActions": "Actions de la tâche",
-    "startTask": "Démarrer la tâche",
-    "stopTask": "Arrêter la tâche",
-    "recoverTask": "Récupérer la tâche",
-    "resumeTask": "Reprendre la tâche",
-    "recovering": "Récupération...",
-    "loadingPlan": "Chargement du plan...",
     "selectTask": "Sélectionner la tâche : {{title}}"
   },
   "labels": {
@@ -255,77 +249,6 @@
   },
   "subtasks": {
     "untitled": "Sous-tâche sans titre"
-  },
-  "escalation": {
-    "title": "La tâche nécessite votre attention",
-    "failedDuring": "Échec pendant",
-    "subtask": "Sous-tâche",
-    "showDetails": "Afficher les détails techniques",
-    "attemptedFixes": "Corrections tentées",
-    "stackTrace": "Trace de la pile",
-    "context": "Contexte",
-    "guidanceLabel": "Fournir des conseils (optionnel)",
-    "guidancePlaceholder": "Décrivez ce que l'IA devrait essayer différemment, fournissez des indices sur la solution ou suggérez une approche spécifique...",
-    "guidanceHint": "Vos conseils seront inclus dans la demande de réessai pour aider l'IA à réussir.",
-    "retry": "Réessayer la tâche",
-    "retryWithGuidance": "Réessayer avec les conseils",
-    "reasons": {
-      "maxRetriesExceeded": "La tâche a échoué après plusieurs tentatives.",
-      "unfixableQaIssues": "La validation QA a trouvé des problèmes qui n'ont pas pu être corrigés automatiquement.",
-      "externalServiceFailure": "Un service externe requis par la tâche a échoué ou n'est pas disponible.",
-      "userDefined": "Une condition d'escalade personnalisée a été déclenchée.",
-      "validationFailed": "La phase de validation a échoué après le nombre maximum d'itérations.",
-      "unknown": "La tâche a rencontré une erreur inattendue."
-    }
-  },
-  "executionMode": {
-    "fullAuto": {
-      "title": "Auto complet",
-      "description": "Les tâches s'exécutent de manière autonome sans interruption. L'IA gère automatiquement la planification, le codage et la validation."
-    },
-    "semiAuto": {
-      "title": "Semi-Auto",
-      "description": "Révisez et approuvez aux points de contrôle clés.",
-      "checkpoints": {
-        "planning": "Après la planification - Révisez le plan d'implémentation",
-        "coding": "Après le codage - Révisez le code implémenté",
-        "validation": "Après la validation - Révisez les résultats QA"
-      }
-    }
-  },
-  "executionComplexity": {
-    "label": "Complexité de la tâche",
-    "helpText": "Choisissez le niveau de planification et d'effort que l'IA doit investir dans cette tâche.",
-    "auto": {
-      "label": "Auto-détection",
-      "description": "Laisser l'IA évaluer la complexité"
-    },
-    "quick": {
-      "label": "Rapide",
-      "description": "Tâches simples avec planification minimale"
-    },
-    "standard": {
-      "label": "Standard",
-      "description": "Tâches normales avec planification complète"
-    },
-    "complex": {
-      "label": "Complexe",
-      "description": "Grandes fonctionnalités avec recherche approfondie"
-    }
-  },
-  "methodology": {
-    "label": "Méthodologie",
-    "helpText": "Choisissez quel plugin de méthodologie utiliser pour l'exécution de la tâche.",
-    "placeholder": "Sélectionner une méthodologie",
-    "loading": "Chargement des méthodologies...",
-    "noMethodologies": "Aucune méthodologie disponible",
-    "verified": "Vérifié",
-    "unverified": "Communauté",
-    "unverifiedWarning": "Les plugins communautaires ne sont pas vérifiés par l'équipe Auto Claude. À utiliser avec précaution.",
-    "badge": {
-      "native": "Native",
-      "bmad": "BMAD"
-    }
   },
   "bulkPR": {
     "selectAllInColumn": "Sélectionner toutes les tâches de la colonne",

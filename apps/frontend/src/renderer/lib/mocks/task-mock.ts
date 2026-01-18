@@ -74,15 +74,6 @@ export const taskMock = {
 
   checkTaskRunning: async () => ({ success: true, data: false }),
 
-  /** Story 4.5: Retry an escalated task with optional user guidance */
-  retryEscalatedTask: async (_taskId: string, _guidance?: string) => ({
-    success: true,
-    data: {
-      restarted: true,
-      message: '[Browser Mock] Task restarted with guidance'
-    }
-  }),
-
   // Task logs operations
   getTaskLogs: async () => ({
     success: true,

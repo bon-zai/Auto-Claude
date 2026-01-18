@@ -9,7 +9,6 @@ export { AuthChoiceStep } from './AuthChoiceStep';
 export { OAuthStep } from './OAuthStep';
 export { PrivacyStep } from './PrivacyStep';
 export { MemoryStep } from './MemoryStep';
-export { MethodologyStep } from './MethodologyStep';
 export { OllamaModelSelector } from './OllamaModelSelector';
 export { FirstSpecStep } from './FirstSpecStep';
 export { CompletionStep } from './CompletionStep';

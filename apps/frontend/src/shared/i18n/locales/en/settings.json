@@ -185,11 +185,6 @@
     "comfortable": "Comfortable",
     "large": "Large"
   },
-  "methodology": {
-    "title": "Default Methodology",
-    "description": "Set your preferred methodology for new tasks",
-    "settingsHelpText": "New tasks will pre-select this methodology. You can override it per-task in the creation wizard."
-  },
   "general": {
     "otherAgentSettings": "Other Agent Settings",
     "otherAgentSettingsDescription": "Additional agent configuration options",
@@ -309,8 +304,6 @@
     "onTaskFailedDescription": "Notify when a task encounters an error",
     "onReviewNeeded": "On Review Needed",
     "onReviewNeededDescription": "Notify when QA requires your review",
-    "onCheckpointReached": "On Checkpoint Reached",
-    "onCheckpointReachedDescription": "Notify when a Semi-Auto task reaches a checkpoint requiring your input",
     "sound": "Sound",
     "soundDescription": "Play sound with notifications"
   },

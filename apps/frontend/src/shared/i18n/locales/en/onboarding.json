@@ -146,8 +146,7 @@
     "devtools": "Dev Tools",
     "privacy": "Privacy",
     "memory": "Memory",
-    "done": "Done",
-    "methodology": "Methodology"
+    "done": "Done"
   },
   "privacy": {
     "title": "Help Improve Auto Claude",
@@ -217,26 +216,6 @@
     "noToolsDetected": "No additional tools detected (VS Code and system terminal will be used)",
     "custom": "Custom...",
     "saveAndContinue": "Save & Continue"
-  },
-  "methodology": {
-    "title": "Choose Your Methodology",
-    "description": "Select how you want Auto Claude to approach your tasks. You can change this later in Settings.",
-    "native": {
-      "title": "Native",
-      "description": "Fast, focused execution with minimal overhead",
-      "bestFor": "Best for: Quick fixes, small features, bug fixes",
-      "phases": ["Discovery", "Spec", "Plan", "Code", "Validate"]
-    },
-    "bmad": {
-      "title": "BMAD",
-      "description": "Comprehensive planning with full documentation",
-      "bestFor": "Best for: New projects, large features, team collaboration",
-      "phases": ["PRD", "Architecture", "Epics", "Stories", "Dev", "Review"]
-    },
-    "back": "Back",
-    "skip": "Skip",
-    "continue": "Continue",
-    "skipDefault": "Skipping will set Native as your default methodology."
   },
   "ollama": {
     "notInstalled": {

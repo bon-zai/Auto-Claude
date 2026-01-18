@@ -49,8 +49,6 @@ export interface TaskAPI {
     options?: import('../../shared/types').TaskRecoveryOptions
   ) => Promise<IPCResult<TaskRecoveryResult>>;
   checkTaskRunning: (taskId: string) => Promise<IPCResult<boolean>>;
-  /** Story 4.5: Retry an escalated task with optional user guidance */
-  retryEscalatedTask: (taskId: string, guidance?: string) => Promise<IPCResult<{ restarted: boolean; message?: string }>>;
 
   // Workspace Management (for human review)
   getWorktreeStatus: (taskId: string) => Promise<IPCResult<import('../../shared/types').WorktreeStatus>>;
@@ -136,10 +134,6 @@ export const createTaskAPI = (): TaskAPI => ({
 
   checkTaskRunning: (taskId: string): Promise<IPCResult<boolean>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CHECK_RUNNING, taskId),
-
-  /** Story 4.5: Retry an escalated task with optional user guidance */
-  retryEscalatedTask: (taskId: string, guidance?: string): Promise<IPCResult<{ restarted: boolean; message?: string }>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_RETRY_ESCALATED, taskId, guidance),
 
   // Workspace Management
   getWorktreeStatus: (taskId: string): Promise<IPCResult<import('../../shared/types').WorktreeStatus>> =>
