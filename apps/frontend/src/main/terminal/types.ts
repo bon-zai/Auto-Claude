@@ -74,3 +74,15 @@ export interface TerminalOperationResult {
  * Window getter function type
  */
 export type WindowGetter = () => BrowserWindow | null;
+
+/**
+ * Terminal info for profile change operations
+ */
+export interface TerminalProfileChangeInfo {
+  id: string;
+  cwd: string;
+  projectPath?: string;
+  claudeSessionId?: string;
+  claudeProfileId?: string;
+  isClaudeMode: boolean;
+}

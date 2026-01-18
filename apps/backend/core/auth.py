@@ -559,25 +559,30 @@ def require_auth_token() -> str:
         if is_macos():
             error_msg += (
                 "To authenticate:\n"
-                "  1. Run: claude setup-token\n"
-                "  2. The token will be saved to macOS Keychain automatically\n\n"
-                "Or set CLAUDE_CODE_OAUTH_TOKEN in your .env file."
+                "  1. Run: claude\n"
+                "  2. Type: /login\n"
+                "  3. Press Enter to open browser\n"
+                "  4. Complete OAuth login in browser\n\n"
+                "The token will be saved to macOS Keychain automatically."
             )
         elif is_windows():
             error_msg += (
                 "To authenticate:\n"
-                "  1. Run: claude setup-token\n"
-                "  2. The token should be saved to Windows Credential Manager\n\n"
-                "If auto-detection fails, set CLAUDE_CODE_OAUTH_TOKEN in your .env file.\n"
-                "Check: %LOCALAPPDATA%\\Claude\\credentials.json"
+                "  1. Run: claude\n"
+                "  2. Type: /login\n"
+                "  3. Press Enter to open browser\n"
+                "  4. Complete OAuth login in browser\n\n"
+                "The token will be saved to Windows Credential Manager."
             )
         else:
             # Linux
             error_msg += (
                 "To authenticate:\n"
-                "  1. Run: claude setup-token\n"
-                "  2. The token will be saved to the system secret service (gnome-keyring/kwallet)\n\n"
-                "If secret-service is not available, set CLAUDE_CODE_OAUTH_TOKEN in your .env file."
+                "  1. Run: claude\n"
+                "  2. Type: /login\n"
+                "  3. Press Enter to open browser\n"
+                "  4. Complete OAuth login in browser\n\n"
+                "Or set CLAUDE_CODE_OAUTH_TOKEN in your .env file."
             )
         raise ValueError(error_msg)
     return token
@@ -713,3 +718,182 @@ def ensure_claude_code_oauth_token() -> None:
     token = get_auth_token()
     if token:
         os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
+
+
+def trigger_login() -> bool:
+    """
+    Trigger Claude Code OAuth login flow.
+
+    Opens the Claude Code CLI and sends /login command to initiate
+    browser-based OAuth authentication. The token is automatically
+    saved to the system credential store (macOS Keychain, Windows
+    Credential Manager).
+
+    Returns:
+        True if login was successful, False otherwise
+    """
+    system = platform.system()
+
+    if system == "Darwin":
+        return _trigger_login_macos()
+    elif system == "Windows":
+        return _trigger_login_windows()
+    else:
+        # Linux: fall back to manual instructions
+        print("\nTo authenticate, run 'claude' and type '/login'")
+        return False
+
+
+def _trigger_login_macos() -> bool:
+    """Trigger login on macOS using expect."""
+    import shutil
+    import tempfile
+
+    # Check if expect is available
+    if not shutil.which("expect"):
+        print("\nTo authenticate, run 'claude' and type '/login'")
+        return False
+
+    # Create expect script
+    expect_script = """#!/usr/bin/expect -f
+set timeout 120
+spawn claude
+expect {
+    -re ".*" {
+        send "/login\\r"
+        expect {
+            "Press Enter" {
+                send "\\r"
+            }
+            -re ".*login.*" {
+                send "\\r"
+            }
+            timeout {
+                send "\\r"
+            }
+        }
+    }
+}
+# Keep running until user completes login or exits
+interact
+"""
+
+    try:
+        # Write expect script to temp file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".exp", delete=False) as f:
+            f.write(expect_script)
+            script_path = f.name
+
+        os.chmod(script_path, 0o700)
+
+        print("\n" + "=" * 60)
+        print("CLAUDE CODE LOGIN")
+        print("=" * 60)
+        print("\nOpening Claude Code for authentication...")
+        print("A browser window will open for OAuth login.")
+        print("After completing login in the browser, press Ctrl+C to exit.\n")
+
+        try:
+            # Run expect script
+            result = subprocess.run(
+                ["expect", script_path],
+                timeout=300,  # 5 minute timeout
+            )
+        finally:
+            # Always clean up temp file
+            try:
+                os.unlink(script_path)
+            except OSError:
+                pass  # File already deleted or doesn't exist
+
+        # Verify token was saved
+        token = get_token_from_keychain()
+        if token:
+            print("\n✓ Login successful! Token saved to macOS Keychain.")
+            return True
+        else:
+            print(
+                "\n✗ Login may not have completed. Try running 'claude' and type '/login'"
+            )
+            return False
+
+    except subprocess.TimeoutExpired:
+        print("\nLogin timed out. Try running 'claude' manually and type '/login'")
+        return False
+    except KeyboardInterrupt:
+        # User pressed Ctrl+C - check if login completed
+        token = get_token_from_keychain()
+        if token:
+            print("\n✓ Login successful! Token saved to macOS Keychain.")
+            return True
+        return False
+    except Exception as e:
+        print(f"\nLogin failed: {e}")
+        print("Try running 'claude' manually and type '/login'")
+        return False
+
+
+def _trigger_login_windows() -> bool:
+    """Trigger login on Windows."""
+    # Windows doesn't have expect by default, so we use a simpler approach
+    # that just launches claude and tells the user what to type
+    print("\n" + "=" * 60)
+    print("CLAUDE CODE LOGIN")
+    print("=" * 60)
+    print("\nLaunching Claude Code...")
+    print("Please type '/login' and press Enter.")
+    print("A browser window will open for OAuth login.\n")
+
+    try:
+        # Launch claude interactively
+        subprocess.run(["claude"], timeout=300)
+
+        # Verify token was saved
+        token = _get_token_from_windows_credential_files()
+        if token:
+            print("\n✓ Login successful!")
+            return True
+        else:
+            print("\n✗ Login may not have completed.")
+            return False
+
+    except Exception as e:
+        print(f"\nLogin failed: {e}")
+        return False
+
+
+def ensure_authenticated() -> str:
+    """
+    Ensure the user is authenticated, prompting for login if needed.
+
+    Checks for existing token and triggers login flow if not found.
+
+    Returns:
+        The authentication token
+
+    Raises:
+        ValueError: If authentication fails after login attempt
+    """
+    # First check if already authenticated
+    token = get_auth_token()
+    if token:
+        return token
+
+    # No token found - trigger login
+    print("\nNo OAuth token found. Starting login flow...")
+
+    if trigger_login():
+        # Re-check for token after login
+        token = get_auth_token()
+        if token:
+            return token
+
+    # Login failed or was cancelled
+    raise ValueError(
+        "Authentication required.\n\n"
+        "To authenticate:\n"
+        "  1. Run: claude\n"
+        "  2. Type: /login\n"
+        "  3. Press Enter to open browser\n"
+        "  4. Complete OAuth login in browser"
+    )

@@ -20,14 +20,29 @@ const CLAUDE_SESSION_PATTERNS = [
 const RATE_LIMIT_PATTERN = /Limit reached\s*[·•]\s*resets\s+(.+?)$/m;
 
 /**
- * Regex pattern to capture OAuth token from `claude setup-token` output
+ * Regex pattern to capture OAuth token from Claude CLI output
+ * Token is displayed when authentication completes via /login or setup-token
  */
 const OAUTH_TOKEN_PATTERN = /(sk-ant-oat01-[A-Za-z0-9_-]+)/;
+
+/**
+ * Regex pattern to capture OAuth authorization URL from Claude CLI /login output
+ * The URL is displayed when /login is run and needs to be opened in browser
+ * Uses \x1b to exclude ANSI escape sequences from URL matching
+ */
+// eslint-disable-next-line no-control-regex -- Intentionally matches ANSI escape sequences to exclude them from URLs
+const OAUTH_URL_PATTERN = /https:\/\/claude\.ai\/oauth\/authorize\?[^\s\x1b\]]+/;
 
 /**
  * Pattern to detect email in Claude output
  */
 const EMAIL_PATTERN = /(?:Authenticated as|Logged in as|email[:\s]+)([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i;
+
+/**
+ * Pattern to detect successful login in Claude CLI output
+ * Matches: "Login successful" or "Logged in as X"
+ */
+const LOGIN_SUCCESS_PATTERN = /(?:Login successful|Successfully logged in|Logged in as\s+\S+@\S+)/i;
 
 /**
  * Extract Claude session ID from output
@@ -59,6 +74,22 @@ export function extractOAuthToken(data: string): string | null {
 }
 
 /**
+ * Extract OAuth authorization URL from output
+ * Returns the URL that needs to be opened in browser for /login flow
+ */
+export function extractOAuthUrl(data: string): string | null {
+  const match = data.match(OAUTH_URL_PATTERN);
+  return match ? match[0] : null;
+}
+
+/**
+ * Check if output contains an OAuth authorization URL
+ */
+export function hasOAuthUrl(data: string): boolean {
+  return OAUTH_URL_PATTERN.test(data);
+}
+
+/**
  * Extract email from output
  */
 export function extractEmail(data: string): string | null {
@@ -78,6 +109,14 @@ export function hasRateLimitMessage(data: string): boolean {
  */
 export function hasOAuthToken(data: string): boolean {
   return OAUTH_TOKEN_PATTERN.test(data);
+}
+
+/**
+ * Check if output indicates successful login
+ * This catches the localhost callback flow where no token is displayed
+ */
+export function hasLoginSuccess(data: string): boolean {
+  return LOGIN_SUCCESS_PATTERN.test(data);
 }
 
 /**

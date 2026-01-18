@@ -17,6 +17,7 @@ import type {
   TerminalWorktreeConfig,
   TerminalWorktreeResult,
   OtherWorktreeInfo,
+  TerminalProfileChangedEvent,
 } from '../../shared/types';
 
 /** Type for proactive swap notification events */
@@ -84,9 +85,14 @@ export interface TerminalAPI {
   onTerminalAuthCreated: (
     callback: (info: { terminalId: string; profileId: string; profileName: string }) => void
   ) => () => void;
+  onTerminalOAuthCodeNeeded: (
+    callback: (info: { terminalId: string; profileId: string; profileName: string }) => void
+  ) => () => void;
+  submitOAuthCode: (terminalId: string, code: string) => Promise<IPCResult>;
   onTerminalClaudeBusy: (callback: (id: string, isBusy: boolean) => void) => () => void;
   onTerminalClaudeExit: (callback: (id: string) => void) => () => void;
   onTerminalPendingResume: (callback: (id: string, sessionId?: string) => void) => () => void;
+  onTerminalProfileChanged: (callback: (event: TerminalProfileChangedEvent) => void) => () => void;
 
   // Claude Profile Management
   getClaudeProfiles: () => Promise<IPCResult<ClaudeProfileSettings>>;
@@ -97,6 +103,8 @@ export interface TerminalAPI {
   switchClaudeProfile: (terminalId: string, profileId: string) => Promise<IPCResult>;
   initializeClaudeProfile: (profileId: string) => Promise<IPCResult>;
   setClaudeProfileToken: (profileId: string, token: string, email?: string) => Promise<IPCResult>;
+  authenticateClaudeProfile: (profileId: string) => Promise<IPCResult<{ terminalId: string; configDir: string }>>;
+  verifyClaudeProfileAuth: (profileId: string) => Promise<IPCResult<{ authenticated: boolean; email?: string }>>;
   getAutoSwitchSettings: () => Promise<IPCResult<import('../../shared/types').ClaudeAutoSwitchSettings>>;
   updateAutoSwitchSettings: (settings: Partial<import('../../shared/types').ClaudeAutoSwitchSettings>) => Promise<IPCResult>;
   fetchClaudeUsage: (terminalId: string) => Promise<IPCResult>;
@@ -321,6 +329,24 @@ export const createTerminalAPI = (): TerminalAPI => ({
     };
   },
 
+  onTerminalOAuthCodeNeeded: (
+    callback: (info: { terminalId: string; profileId: string; profileName: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      info: { terminalId: string; profileId: string; profileName: string }
+    ): void => {
+      callback(info);
+    };
+    ipcRenderer.on(IPC_CHANNELS.TERMINAL_OAUTH_CODE_NEEDED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.TERMINAL_OAUTH_CODE_NEEDED, handler);
+    };
+  },
+
+  submitOAuthCode: (terminalId: string, code: string): Promise<IPCResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_OAUTH_CODE_SUBMIT, terminalId, code),
+
   onTerminalClaudeBusy: (
     callback: (id: string, isBusy: boolean) => void
   ): (() => void) => {
@@ -368,6 +394,21 @@ export const createTerminalAPI = (): TerminalAPI => ({
     };
   },
 
+  onTerminalProfileChanged: (
+    callback: (event: TerminalProfileChangedEvent) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: TerminalProfileChangedEvent
+    ): void => {
+      callback(data);
+    };
+    ipcRenderer.on(IPC_CHANNELS.TERMINAL_PROFILE_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.TERMINAL_PROFILE_CHANGED, handler);
+    };
+  },
+
   // Claude Profile Management
   getClaudeProfiles: (): Promise<IPCResult<ClaudeProfileSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_PROFILES_GET),
@@ -392,6 +433,12 @@ export const createTerminalAPI = (): TerminalAPI => ({
 
   setClaudeProfileToken: (profileId: string, token: string, email?: string): Promise<IPCResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_PROFILE_SET_TOKEN, profileId, token, email),
+
+  authenticateClaudeProfile: (profileId: string): Promise<IPCResult<{ terminalId: string; configDir: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_PROFILE_AUTHENTICATE, profileId),
+
+  verifyClaudeProfileAuth: (profileId: string): Promise<IPCResult<{ authenticated: boolean; email?: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_PROFILE_VERIFY_AUTH, profileId),
 
   getAutoSwitchSettings: (): Promise<IPCResult<import('../../shared/types').ClaudeAutoSwitchSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_PROFILE_AUTO_SWITCH_SETTINGS),
