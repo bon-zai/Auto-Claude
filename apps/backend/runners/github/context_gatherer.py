@@ -20,6 +20,7 @@ import ast
 import asyncio
 import json
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1043,6 +1044,92 @@ class PRContextGatherer:
             return {str(type_def)}
 
         return set()
+
+    def _find_dependents(self, file_path: str, max_results: int = 15) -> set[str]:
+        """
+        Find files that import the given file (reverse dependencies).
+
+        Uses grep to search for import statements referencing this file.
+        Limited to prevent performance issues on large codebases.
+
+        Args:
+            file_path: Path of the file to find dependents for
+            max_results: Maximum number of dependents to return
+
+        Returns:
+            Set of file paths that import this file.
+        """
+        dependents: set[str] = set()
+        path_obj = Path(file_path)
+        stem = path_obj.stem  # e.g., 'helpers' from 'utils/helpers.ts'
+
+        # Skip if stem is too generic (would match too many files)
+        if stem in ["index", "main", "app", "utils", "helpers", "types", "constants"]:
+            return dependents
+
+        # Build grep patterns based on file type
+        patterns = []
+
+        if path_obj.suffix in [".ts", ".tsx", ".js", ".jsx"]:
+            # Match various import styles for JS/TS
+            # from './helpers', from '../utils/helpers', from '@/utils/helpers'
+            patterns.append(f"['\"].*{stem}['\"]")
+            # Also match without extension: import from './helpers' (no .ts)
+            file_types = [
+                "--include=*.ts",
+                "--include=*.tsx",
+                "--include=*.js",
+                "--include=*.jsx",
+            ]
+        elif path_obj.suffix == ".py":
+            # Match Python imports: from .helpers import, import helpers
+            patterns.append(f"(from.*{stem}|import.*{stem})")
+            file_types = ["--include=*.py"]
+        else:
+            return dependents
+
+        try:
+            for pattern in patterns:
+                result = subprocess.run(
+                    [
+                        "grep",
+                        "-rl",  # Recursive, list files only
+                        "-E",  # Extended regex
+                        pattern,
+                        *file_types,
+                        "--exclude-dir=node_modules",
+                        "--exclude-dir=.git",
+                        "--exclude-dir=dist",
+                        "--exclude-dir=build",
+                        "--exclude-dir=__pycache__",
+                        "--exclude-dir=.venv",
+                        "--exclude-dir=venv",
+                        ".",
+                    ],
+                    cwd=self.project_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=5.0,  # 5 second timeout to prevent hanging
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split("\n"):
+                        if line and line != f"./{file_path}":
+                            # Remove leading ./
+                            clean_path = line.lstrip("./")
+                            # Don't include the file itself
+                            if clean_path != file_path:
+                                dependents.add(clean_path)
+                                if len(dependents) >= max_results:
+                                    return dependents
+        except subprocess.TimeoutExpired:
+            safe_print(f"[Context] Timeout finding dependents for {file_path}")
+        except FileNotFoundError:
+            # grep not available - skip silently
+            pass
+        except Exception as e:
+            safe_print(f"[Context] Error finding dependents: {e}")
+
+        return dependents
 
     def _load_json_safe(self, filename: str) -> dict | None:
         """
