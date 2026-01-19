@@ -1,0 +1,189 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Methodology Manifest",
+  "description": "Schema for methodology plugin manifest.yaml files",
+  "type": "object",
+  "required": ["name", "version", "entry_point", "phases"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique identifier for the methodology plugin (kebab-case recommended)",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version string (e.g., '1.0.0')",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"
+    },
+    "entry_point": {
+      "type": "string",
+      "description": "Module.ClassName path to the MethodologyRunner implementation",
+      "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)+$"
+    },
+    "phases": {
+      "type": "array",
+      "description": "List of phase definitions for the methodology pipeline",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/phase"
+      }
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the methodology"
+    },
+    "author": {
+      "type": "string",
+      "description": "Author name or organization"
+    },
+    "checkpoints": {
+      "type": "array",
+      "description": "List of checkpoint definitions for Semi-Auto pause points",
+      "items": {
+        "$ref": "#/definitions/checkpoint"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "List of artifact definitions for methodology outputs",
+      "items": {
+        "$ref": "#/definitions/artifact"
+      }
+    },
+    "min_auto_claude_version": {
+      "type": "string",
+      "description": "Minimum Auto Claude version required (optional, for future compatibility checks)",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "Runtime requirement (optional, e.g., 'python3.12')",
+      "pattern": "^[a-z][a-z0-9._-]*$"
+    },
+    "complexity_levels": {
+      "type": "array",
+      "description": "Supported complexity levels (optional)",
+      "items": {
+        "type": "string",
+        "enum": ["quick", "standard", "complex"]
+      },
+      "minItems": 1
+    },
+    "execution_modes": {
+      "type": "array",
+      "description": "Supported execution modes (optional)",
+      "items": {
+        "type": "string",
+        "enum": ["full_auto", "semi_auto"]
+      },
+      "minItems": 1
+    },
+    "license": {
+      "type": "string",
+      "description": "License identifier (optional, e.g., 'MIT', 'Apache-2.0')"
+    },
+    "homepage": {
+      "type": "string",
+      "description": "Project homepage URL (optional)",
+      "format": "uri"
+    },
+    "repository": {
+      "type": "string",
+      "description": "Source repository URL (optional)",
+      "format": "uri"
+    },
+    "keywords": {
+      "type": "array",
+      "description": "Keywords for discovery (optional)",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "phase": {
+      "type": "object",
+      "description": "A phase definition in the methodology pipeline",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the phase",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name for display",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of what this phase does"
+        },
+        "artifacts": {
+          "type": "array",
+          "description": "List of artifact IDs produced by this phase",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "checkpoint": {
+      "type": "object",
+      "description": "A checkpoint definition for Semi-Auto pause points",
+      "required": ["id", "phase"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the checkpoint",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "description": "ID of the phase this checkpoint follows"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the user should review at this checkpoint"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "description": "An artifact definition for methodology outputs",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the artifact",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name for display",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of artifact content",
+          "enum": ["markdown", "json", "yaml", "text", "html"]
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to the artifact file relative to spec directory"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -154,8 +154,17 @@ export interface TaskDraft {
   images: ImageAttachment[];
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
+  executionMode?: ExecutionMode;
+  executionComplexity?: ExecutionComplexity;
+  methodology?: string;  // Methodology plugin name (e.g., 'native', 'bmad')
   savedAt: Date;
 }
+
+// Execution mode for task execution
+export type ExecutionMode = 'full_auto' | 'semi_auto';
+
+// Execution complexity - how much planning/effort to invest
+export type ExecutionComplexity = 'auto' | 'quick' | 'standard' | 'complex';
 
 // Task metadata from ideation or manual entry
 export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex';
@@ -225,6 +234,11 @@ export interface TaskMetadata {
   // Review settings
   requireReviewBeforeCoding?: boolean;  // Require human review of spec/plan before coding starts
 
+  // Execution mode
+  executionMode?: ExecutionMode;  // Full auto (no interruption) or semi-auto (checkpoints)
+  executionComplexity?: ExecutionComplexity;  // How much planning/effort to invest (auto, quick, standard, complex)
+  methodology?: string;  // Methodology plugin name (e.g., 'native', 'bmad')
+
   // Agent configuration (from agent profile or manual selection)
   model?: ModelType;  // Claude model to use (haiku, sonnet, opus) - used when not auto profile
   thinkingLevel?: ThinkingLevel;  // Thinking budget level (none, low, medium, high, ultrathink)
@@ -243,6 +257,51 @@ export interface TaskMetadata {
   archivedInVersion?: string;  // Version in which task was archived (from changelog)
 }
 
+// Structured error information for tasks with parse errors
+export interface TaskErrorInfo {
+  key: string;  // Translation key (e.g., 'errors:task.parseImplementationPlan')
+  meta?: { specId?: string; error?: string };  // Error context for substitution in translation
+}
+
+/**
+ * Escalation reason codes matching backend EscalationReason enum
+ * Story Reference: Story 4.5 - Task Escalation Handling
+ */
+export type EscalationReason =
+  | 'max_retries_exceeded'
+  | 'unfixable_qa_issues'
+  | 'external_service_failure'
+  | 'user_defined'
+  | 'validation_failed'
+  | 'unknown';
+
+/**
+ * Escalation information for tasks that couldn't complete autonomously
+ * Story Reference: Story 4.5 Task 2 - Store escalation reason and context
+ */
+export interface EscalationInfo {
+  /** Why the task was escalated */
+  reason: EscalationReason;
+  /** The phase that was executing when escalation occurred */
+  failedPhase: string;
+  /** Human-readable error description */
+  errorMessage: string;
+  /** Optional full stack trace for debugging */
+  errorTrace?: string;
+  /** List of fix attempts made before escalation */
+  attemptedFixes: string[];
+  /** Additional context at the point of failure */
+  context: Record<string, unknown>;
+  /** When the escalation occurred */
+  createdAt: string;
+  /** Optional user guidance for retry (set when resuming) */
+  guidance?: string;
+  /** Optional ID of the failing subtask */
+  subtaskId?: string;
+  /** Optional iteration number (for validation failures) */
+  iteration?: number;
+}
+
 export interface Task {
   id: string;
   specId: string;
@@ -256,6 +315,8 @@ export interface Task {
   logs: string[];
   metadata?: TaskMetadata;  // Rich metadata from ideation or manual entry
   executionProgress?: ExecutionProgress;  // Real-time execution progress
+  /** Escalation information if task needs user attention (Story 4.5) */
+  escalationInfo?: EscalationInfo;
   releasedInVersion?: string;  // Version in which this task was released
   stagedInMainProject?: boolean;  // True if changes were staged to main project (worktree merged with --no-commit)
   stagedAt?: string;  // ISO timestamp when changes were staged

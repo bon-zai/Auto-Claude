@@ -18,6 +18,7 @@ import { ClaudeCodeStep } from './ClaudeCodeStep';
 import { DevToolsStep } from './DevToolsStep';
 import { PrivacyStep } from './PrivacyStep';
 import { GraphitiStep } from './GraphitiStep';
+import { MethodologyStep } from './MethodologyStep';
 import { CompletionStep } from './CompletionStep';
 import { useSettingsStore } from '../../stores/settings-store';
 
@@ -29,7 +30,7 @@ interface OnboardingWizardProps {
 }
 
 // Wizard step identifiers
-type WizardStepId = 'welcome' | 'auth-choice' | 'oauth' | 'claude-code' | 'devtools' | 'privacy' | 'graphiti' | 'completion';
+type WizardStepId = 'welcome' | 'auth-choice' | 'oauth' | 'claude-code' | 'devtools' | 'privacy' | 'graphiti' | 'methodology' | 'completion';
 
 // Step configuration with translation keys
 const WIZARD_STEPS: { id: WizardStepId; labelKey: string }[] = [
@@ -40,6 +41,7 @@ const WIZARD_STEPS: { id: WizardStepId; labelKey: string }[] = [
   { id: 'devtools', labelKey: 'steps.devtools' },
   { id: 'privacy', labelKey: 'steps.privacy' },
   { id: 'graphiti', labelKey: 'steps.memory' },
+  { id: 'methodology', labelKey: 'steps.methodology' },
   { id: 'completion', labelKey: 'steps.done' }
 ];
 
@@ -227,6 +229,14 @@ export function OnboardingWizard({
             onNext={goToNextStep}
             onBack={goToPreviousStep}
             onSkip={skipWizard}
+          />
+        );
+      case 'methodology':
+        return (
+          <MethodologyStep
+            onNext={goToNextStep}
+            onBack={goToPreviousStep}
+            onSkip={goToNextStep}
           />
         );
       case 'completion':

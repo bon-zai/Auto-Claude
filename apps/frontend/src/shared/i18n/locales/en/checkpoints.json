@@ -1,0 +1,76 @@
+{
+  "dialog": {
+    "title": "{{phase}} Complete",
+    "phaseComplete": "phase complete",
+    "expand": "Show details",
+    "collapse": "Hide details",
+    "keyDecisions": "Key Decisions",
+    "warnings": "Warnings",
+    "artifacts": "Artifacts Produced",
+    "feedbackTitle": "Revision Feedback",
+    "feedbackPlaceholder": "Describe what changes you'd like to see...",
+    "submitting": "Submitting...",
+    "submitRevision": "Submit Revision",
+    "processing": "Processing...",
+    "approve": "Approve & Continue",
+    "approveWithFeedback": "Approve with Feedback",
+    "approvalFeedbackTitle": "Guidance for Next Phase",
+    "approvalFeedbackPlaceholder": "Add any guidance or context for the AI to consider in the next phase (optional)...",
+    "submitApprovalWithFeedback": "Approve with Feedback",
+    "revision": "Request Revision",
+    "cancel": "Cancel Task"
+  },
+  "phases": {
+    "planning": "Planning",
+    "coding": "Coding",
+    "validation": "Validation"
+  },
+  "artifactTypes": {
+    "file": "File",
+    "plan": "Implementation Plan",
+    "code": "Source Code",
+    "test": "Test File",
+    "report": "Report"
+  },
+  "severity": {
+    "info": "Info",
+    "warning": "Warning",
+    "critical": "Critical"
+  },
+  "feedback": {
+    "placeholder": "Enter your feedback or guidance for the AI...",
+    "submit": "Submit Feedback",
+    "submitting": "Submitting...",
+    "attachFile": "Attach File",
+    "addLinkButton": "Add Link",
+    "removeAttachment": "Remove attachment",
+    "linkNamePlaceholder": "Link name (optional)",
+    "linkUrlPlaceholder": "https://...",
+    "cancelLink": "Cancel",
+    "addLink": "Add",
+    "attachments_one": "{{count}} attachment",
+    "attachments_other": "{{count}} attachments",
+    "attachmentCount_one": "{{count}} file",
+    "attachmentCount_other": "{{count}} files",
+    "invalidUrl": "Please enter a valid URL (http:// or https://)",
+    "fileAttachmentComingSoon": "File attachment coming soon",
+    "historyTitle": "Previous Feedback",
+    "showAll": "Show all ({{count}})",
+    "showLess": "Show less"
+  },
+  "revision": {
+    "historyTitle": "Revision History",
+    "feedback": "Revision Feedback",
+    "beforeArtifacts": "Before",
+    "afterArtifacts": "After",
+    "noArtifacts": "No artifacts",
+    "error": "Error",
+    "completedAt": "Completed at {{time}}",
+    "status": {
+      "pending": "Pending",
+      "in_progress": "In Progress",
+      "completed": "Completed",
+      "failed": "Failed"
+    }
+  }
+}

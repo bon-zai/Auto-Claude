@@ -20,6 +20,7 @@ import remarkGfm from 'remark-gfm';
 import { Badge } from '../ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, formatRelativeTime } from '../../lib/utils';
+import { MethodologyBadge } from '../MethodologyBadge';
 import {
   TASK_CATEGORY_LABELS,
   TASK_CATEGORY_COLORS,
@@ -70,7 +71,8 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
     task.metadata.complexity ||
     task.metadata.impact ||
     task.metadata.securitySeverity ||
-    task.metadata.sourceType
+    task.metadata.sourceType ||
+    task.metadata.methodology
   );
 
   return (
@@ -137,6 +139,10 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
                   ? IDEATION_TYPE_LABELS[task.metadata.ideationType] || task.metadata.ideationType
                   : task.metadata.sourceType}
               </Badge>
+            )}
+            {/* Methodology */}
+            {task.metadata?.methodology && (
+              <MethodologyBadge methodology={task.metadata.methodology} />
             )}
           </div>
         )}

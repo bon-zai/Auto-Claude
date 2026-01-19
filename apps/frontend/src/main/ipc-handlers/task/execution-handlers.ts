@@ -818,6 +818,122 @@ export function registerTaskExecutionHandlers(
   );
 
   /**
+   * Story 4.5: Retry an escalated task with optional user guidance
+   * Clears escalation state and restarts the task with guidance injected
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_RETRY_ESCALATED,
+    async (
+      _,
+      taskId: string,
+      guidance?: string
+    ): Promise<IPCResult<{ restarted: boolean; message?: string }>> => {
+      console.log('[TASK_RETRY_ESCALATED] Received request for taskId:', taskId, 'guidance:', guidance ? 'provided' : 'none');
+
+      // Find task and project
+      const { task, project } = findTaskAndProject(taskId);
+
+      if (!task || !project) {
+        return { success: false, error: 'Task not found' };
+      }
+
+      // Check authentication before restarting
+      const initResult = await ensureProfileManagerInitialized();
+      if (!initResult.success) {
+        return { success: false, error: initResult.error };
+      }
+      const profileManager = initResult.profileManager;
+      if (!profileManager.hasValidAuth()) {
+        return {
+          success: false,
+          error: 'Claude authentication required. Please go to Settings > Claude Profiles and authenticate your account.'
+        };
+      }
+
+      // Get spec directory
+      const specsBaseDir = getSpecsDir(project.autoBuildPath);
+      const specDir = path.join(project.path, specsBaseDir, task.specId);
+      const escalationPath = path.join(specDir, 'escalation.json');
+
+      // Update escalation file with guidance if provided (Story 4.5 Issue #5 fix)
+      let guidanceSaved = false;
+      let guidanceWarning: string | undefined;
+
+      if (guidance) {
+        if (existsSync(escalationPath)) {
+          try {
+            const escalationContent = safeReadFileSync(escalationPath);
+            if (escalationContent) {
+              const escalation = JSON.parse(escalationContent);
+              escalation.guidance = guidance;
+              atomicWriteFileSync(escalationPath, JSON.stringify(escalation, null, 2));
+              console.log('[TASK_RETRY_ESCALATED] Saved guidance to escalation file');
+              guidanceSaved = true;
+            } else {
+              guidanceWarning = 'Escalation file empty - guidance may not be applied';
+              console.warn('[TASK_RETRY_ESCALATED]', guidanceWarning);
+            }
+          } catch (error) {
+            guidanceWarning = 'Failed to save guidance - task will restart without it';
+            console.error('[TASK_RETRY_ESCALATED] Failed to update escalation with guidance:', error);
+          }
+        } else {
+          guidanceWarning = 'No escalation file found - guidance may not be applied';
+          console.warn('[TASK_RETRY_ESCALATED]', guidanceWarning);
+        }
+      }
+
+      // Start file watcher for this task
+      fileWatcher.watch(taskId, specDir);
+
+      // Get base branch
+      const baseBranch = task.metadata?.baseBranch || project.settings?.mainBranch;
+
+      // Start task execution - the executor will read escalation.json and use the guidance
+      console.log('[TASK_RETRY_ESCALATED] Restarting task execution for:', task.specId);
+      agentManager.startTaskExecution(
+        taskId,
+        project.path,
+        task.specId,
+        {
+          parallel: false,
+          workers: 1,
+          baseBranch,
+          useWorktree: task.metadata?.useWorktree
+        }
+      );
+
+      // Notify status change
+      const mainWindow = getMainWindow();
+      if (mainWindow) {
+        mainWindow.webContents.send(
+          IPC_CHANNELS.TASK_STATUS_CHANGE,
+          taskId,
+          'in_progress'
+        );
+      }
+
+      // Build response message (Story 4.5 Issue #5 fix)
+      let message = 'Task restarted';
+      if (guidance) {
+        if (guidanceSaved) {
+          message = 'Task restarted with guidance';
+        } else if (guidanceWarning) {
+          message = `Task restarted (warning: ${guidanceWarning})`;
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          restarted: true,
+          message
+        }
+      };
+    }
+  );
+
+  /**
    * Recover a stuck task (status says in_progress but no process running)
    */
   ipcMain.handle(

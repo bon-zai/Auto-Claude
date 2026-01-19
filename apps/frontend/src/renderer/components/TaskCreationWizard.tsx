@@ -18,6 +18,9 @@ import { Label } from './ui/label';
 import { Combobox, type ComboboxOption } from './ui/combobox';
 import { TaskModalLayout } from './task-form/TaskModalLayout';
 import { TaskFormFields } from './task-form/TaskFormFields';
+import { ExecutionModeTabs, type ExecutionMode } from './task-form/ExecutionModeTabs';
+import { ComplexitySelector, type ExecutionComplexity } from './task-form/ComplexitySelector';
+import { MethodologySelector } from './task-form/MethodologySelector';
 import { type FileReferenceData } from './task-form/useImageUpload';
 import { TaskFileExplorerDrawer } from './TaskFileExplorerDrawer';
 import { FileAutocomplete } from './FileAutocomplete';
@@ -48,7 +51,7 @@ export function TaskCreationWizard({
   onOpenChange
 }: TaskCreationWizardProps) {
   const { t } = useTranslation(['tasks', 'common']);
-  const { settings } = useSettingsStore();
+  const { settings, isLoading: isSettingsLoading } = useSettingsStore();
   const selectedProfile = DEFAULT_AGENT_PROFILES.find(
     p => p.id === settings.selectedAgentProfile
   ) || DEFAULT_AGENT_PROFILES.find(p => p.id === 'auto')!;
@@ -117,6 +120,16 @@ export function TaskCreationWizard({
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
 
+  // Execution mode - default to full_auto
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('full_auto');
+
+  // Execution complexity - default to auto (AI-assessed)
+  const [executionComplexity, setExecutionComplexity] = useState<ExecutionComplexity>('auto');
+
+  // Methodology - use settings default or fall back to 'native' (verified, bundled)
+  // Initialize with 'native' and sync from settings once loaded (via useEffect below)
+  const [methodology, setMethodology] = useState<string>('native');
+
   // Draft state
   const [isDraftRestored, setIsDraftRestored] = useState(false);
 
@@ -135,6 +148,14 @@ export function TaskCreationWizard({
   useEffect(() => {
     descriptionValueRef.current = description;
   }, [description]);
+
+  // Sync methodology from settings when dialog opens and settings are loaded
+  // This ensures we use the persisted default after initial mount
+  useEffect(() => {
+    if (open && !isSettingsLoading && !isDraftRestored) {
+      setMethodology(settings.defaultMethodology || 'native');
+    }
+  }, [open, isSettingsLoading, isDraftRestored, settings.defaultMethodology]);
 
   // Load draft when dialog opens
   useEffect(() => {
@@ -155,6 +176,9 @@ export function TaskCreationWizard({
         setImages(draft.images);
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
+        setExecutionMode(draft.executionMode ?? 'full_auto');
+        setExecutionComplexity(draft.executionComplexity ?? 'auto');
+        setMethodology(draft.methodology ?? settings.defaultMethodology ?? 'native');
         setIsDraftRestored(true);
 
         if (draft.category || draft.priority || draft.complexity || draft.impact) {
@@ -183,6 +207,7 @@ export function TaskCreationWizard({
         setShowClassification(false);
         setShowFileExplorer(false);
         setShowGitOptions(false);
+        // Initialize methodology from settings (respects loading state via separate effect)
       }
     }
   }, [open, projectId, settings.selectedAgentProfile, settings.customPhaseModels, settings.customPhaseThinking, selectedProfile.model, selectedProfile.thinkingLevel, selectedProfile.phaseModels, selectedProfile.phaseThinking]);
@@ -252,8 +277,11 @@ export function TaskCreationWizard({
     images,
     referencedFiles,
     requireReviewBeforeCoding,
+    executionMode,
+    executionComplexity,
+    methodology,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, executionMode, executionComplexity, methodology]);
 
   /**
    * Detect @ mention being typed and show autocomplete
@@ -422,6 +450,12 @@ export function TaskCreationWizard({
       if (images.length > 0) metadata.attachedImages = images;
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
       if (requireReviewBeforeCoding) metadata.requireReviewBeforeCoding = true;
+      // Always include execution mode - it determines checkpoint behavior
+      metadata.executionMode = executionMode;
+      // Always include execution complexity - it determines planning effort
+      metadata.executionComplexity = executionComplexity;
+      // Always include methodology - it determines which plugin runs the task
+      if (methodology) metadata.methodology = methodology;
       // Always include baseBranch - resolve PROJECT_DEFAULT_BRANCH to actual branch name
       // This ensures the backend always knows which branch to use for worktree creation
       if (baseBranch === PROJECT_DEFAULT_BRANCH) {
@@ -448,21 +482,30 @@ export function TaskCreationWizard({
     }
   };
 
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
+    // Get fresh settings from store to avoid stale closure
+    const currentSettings = useSettingsStore.getState().settings;
+    const currentProfile = DEFAULT_AGENT_PROFILES.find(
+      p => p.id === currentSettings.selectedAgentProfile
+    ) || DEFAULT_AGENT_PROFILES.find(p => p.id === 'auto')!;
+
     setTitle('');
     setDescription('');
     setCategory('');
     setPriority('');
     setComplexity('');
     setImpact('');
-    setProfileId(settings.selectedAgentProfile || 'auto');
-    setModel(selectedProfile.model);
-    setThinkingLevel(selectedProfile.thinkingLevel);
-    setPhaseModels(settings.customPhaseModels || selectedProfile.phaseModels || DEFAULT_PHASE_MODELS);
-    setPhaseThinking(settings.customPhaseThinking || selectedProfile.phaseThinking || DEFAULT_PHASE_THINKING);
+    setProfileId(currentSettings.selectedAgentProfile || 'auto');
+    setModel(currentProfile.model);
+    setThinkingLevel(currentProfile.thinkingLevel);
+    setPhaseModels(currentSettings.customPhaseModels || currentProfile.phaseModels || DEFAULT_PHASE_MODELS);
+    setPhaseThinking(currentSettings.customPhaseThinking || currentProfile.phaseThinking || DEFAULT_PHASE_THINKING);
     setImages([]);
     setReferencedFiles([]);
     setRequireReviewBeforeCoding(false);
+    setExecutionMode('full_auto');
+    setExecutionComplexity('auto');
+    setMethodology(currentSettings.defaultMethodology || 'native');
     setBaseBranch(PROJECT_DEFAULT_BRANCH);
     setUseWorktree(true);
     setError(null);
@@ -470,7 +513,7 @@ export function TaskCreationWizard({
     setShowFileExplorer(false);
     setShowGitOptions(false);
     setIsDraftRestored(false);
-  };
+  }, []);
 
   const handleClose = () => {
     if (isCreating) return;
@@ -595,6 +638,29 @@ export function TaskCreationWizard({
       }
     >
       <div className="space-y-6">
+        {/* Execution Mode Tabs - Full Auto vs Semi-Auto */}
+        <ExecutionModeTabs
+          value={executionMode}
+          onChange={setExecutionMode}
+          disabled={isCreating}
+        />
+
+        {/* Execution Complexity Selector */}
+        <ComplexitySelector
+          value={executionComplexity}
+          onChange={setExecutionComplexity}
+          disabled={isCreating}
+          idPrefix="create"
+        />
+
+        {/* Methodology Selector */}
+        <MethodologySelector
+          value={methodology}
+          onChange={setMethodology}
+          disabled={isCreating}
+          idPrefix="create"
+        />
+
         {/* Worktree isolation info banner */}
         <div className="flex items-start gap-3 p-4 bg-info/10 border border-info/30 rounded-lg">
           <Info className="h-5 w-5 text-info flex-shrink-0 mt-0.5" />

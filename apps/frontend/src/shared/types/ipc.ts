@@ -164,6 +164,8 @@ export interface ElectronAPI {
   updateTaskStatus: (taskId: string, status: TaskStatus, options?: { forceCleanup?: boolean }) => Promise<IPCResult & { worktreeExists?: boolean; worktreePath?: string }>;
   recoverStuckTask: (taskId: string, options?: TaskRecoveryOptions) => Promise<IPCResult<TaskRecoveryResult>>;
   checkTaskRunning: (taskId: string) => Promise<IPCResult<boolean>>;
+  /** Story 4.5: Retry an escalated task with optional user guidance */
+  retryEscalatedTask: (taskId: string, guidance?: string) => Promise<IPCResult<{ restarted: boolean; message?: string }>>;
 
   // Workspace management (for human review)
   // Per-spec architecture: Each spec has its own worktree at .worktrees/{spec-name}/
@@ -780,6 +782,9 @@ export interface ElectronAPI {
 
   // GitHub API (nested for organized access)
   github: import('../../preload/api/modules/github-api').GitHubAPI;
+
+  // Checkpoint API (Semi-Auto execution mode - Story 5.4)
+  checkpoints: import('../../preload/api/modules/checkpoint-api').CheckpointAPI;
 
   // Claude Code CLI operations
   checkClaudeCodeVersion: () => Promise<IPCResult<import('./cli').ClaudeCodeVersionInfo>>;

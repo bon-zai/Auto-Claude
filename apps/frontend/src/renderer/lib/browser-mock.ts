@@ -231,6 +231,24 @@ const browserMockAPI: ElectronAPI = {
     onAnalyzePreviewError: () => () => {}
   },
 
+  // Checkpoint Operations (Semi-Auto mode)
+  checkpoints: {
+    approve: async () => ({
+      success: true,
+      data: { success: true, message: 'Mock approval', resumed: true }
+    }),
+    revise: async () => ({
+      success: true,
+      data: { success: true, message: 'Mock revision', resumed: true }
+    }),
+    cancel: async () => ({
+      success: true,
+      data: { success: true, message: 'Mock cancel', stopped: true }
+    }),
+    onCheckpointReached: () => () => {},
+    onCheckpointResumed: () => () => {},
+  },
+
   // Claude Code Operations
   checkClaudeCodeVersion: async () => ({
     success: true,
