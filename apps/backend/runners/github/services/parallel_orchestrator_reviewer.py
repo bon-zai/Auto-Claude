@@ -74,6 +74,35 @@ DEBUG_MODE = os.environ.get("DEBUG", "").lower() in ("true", "1", "yes")
 PR_WORKTREE_DIR = ".auto-claude/github/pr/worktrees"
 
 
+class ConfidenceTier:
+    """Confidence tiers for finding routing.
+
+    Simple class with constants (not enum) to match codebase style.
+    Findings are routed based on their confidence score:
+    - HIGH (>=0.8): Included as-is
+    - MEDIUM (0.5-0.8): Included with "[Potential]" prefix
+    - LOW (<0.5): Logged but excluded from output
+    """
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+    # Thresholds
+    HIGH_THRESHOLD = 0.8
+    LOW_THRESHOLD = 0.5
+
+    @classmethod
+    def get_tier(cls, confidence: float) -> str:
+        """Get tier for a given confidence value."""
+        if confidence >= cls.HIGH_THRESHOLD:
+            return cls.HIGH
+        elif confidence >= cls.LOW_THRESHOLD:
+            return cls.MEDIUM
+        else:
+            return cls.LOW
+
+
 def _validate_finding_evidence(finding: PRReviewFinding) -> tuple[bool, str]:
     """
     Check if finding has actual code evidence, not just descriptions.
@@ -1072,6 +1101,59 @@ The SDK will run invoked agents in parallel automatically.
                 unique.append(f)
 
         return unique
+
+    def _apply_confidence_routing(
+        self, findings: list[PRReviewFinding]
+    ) -> list[PRReviewFinding]:
+        """
+        Route findings based on confidence scores.
+
+        - HIGH (>=0.8): Keep as-is, include in output
+        - MEDIUM (0.5-0.8): Prepend "[Potential] " to title, include in output
+        - LOW (<0.5): Log with logger.info(), exclude from output
+
+        Args:
+            findings: List of findings to route
+
+        Returns:
+            Filtered list of findings (HIGH and MEDIUM only)
+        """
+        routed = []
+        tier_counts = {"high": 0, "medium": 0, "low": 0}
+
+        for finding in findings:
+            # Handle missing confidence gracefully (default to 0.5)
+            confidence = getattr(finding, "confidence", 0.5)
+            if confidence is None:
+                confidence = 0.5
+            confidence = self._normalize_confidence(confidence)
+
+            tier = ConfidenceTier.get_tier(confidence)
+            tier_counts[tier] += 1
+
+            if tier == ConfidenceTier.HIGH:
+                # HIGH: Include as-is
+                routed.append(finding)
+            elif tier == ConfidenceTier.MEDIUM:
+                # MEDIUM: Prepend "[Potential] " to title
+                if not finding.title.startswith("[Potential] "):
+                    finding.title = f"[Potential] {finding.title}"
+                routed.append(finding)
+            else:
+                # LOW: Log and exclude
+                logger.info(
+                    f"[PRReview] Dropping low-confidence finding: "
+                    f"'{finding.title}' (confidence={confidence:.2f}, "
+                    f"file={finding.file}:{finding.line})"
+                )
+
+        logger.info(
+            f"[PRReview] Confidence routing: HIGH={tier_counts['high']}, "
+            f"MEDIUM={tier_counts['medium']}, LOW={tier_counts['low']} "
+            f"(dropped {tier_counts['low']} low-confidence findings)"
+        )
+
+        return routed
 
     def _generate_verdict(
         self,
