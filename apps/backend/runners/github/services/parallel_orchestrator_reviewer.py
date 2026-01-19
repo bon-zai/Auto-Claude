@@ -131,6 +131,43 @@ def _validate_finding_evidence(finding: PRReviewFinding) -> tuple[bool, str]:
     return True, "Valid evidence"
 
 
+def _is_finding_in_scope(
+    finding: PRReviewFinding,
+    changed_files: list[str],
+) -> tuple[bool, str]:
+    """
+    Check if finding is within PR scope.
+
+    Args:
+        finding: The finding to check
+        changed_files: List of file paths changed in the PR
+
+    Returns:
+        Tuple of (is_in_scope, reason)
+    """
+    if not finding.file:
+        return False, "No file specified"
+
+    # Check if file is in changed files
+    if finding.file not in changed_files:
+        # Allow impact findings (about how changes affect other files)
+        impact_keywords = ["breaks", "affects", "impact", "caller", "depends"]
+        description_lower = (finding.description or "").lower()
+        is_impact_finding = any(kw in description_lower for kw in impact_keywords)
+
+        if not is_impact_finding:
+            return (
+                False,
+                f"File '{finding.file}' not in PR changed files and not an impact finding",
+            )
+
+    # Check line number is reasonable (> 0)
+    if finding.line is not None and finding.line <= 0:
+        return False, f"Invalid line number: {finding.line}"
+
+    return True, "In scope"
+
+
 class ParallelOrchestratorReviewer:
     """
     PR reviewer using SDK subagents for parallel specialist analysis.
