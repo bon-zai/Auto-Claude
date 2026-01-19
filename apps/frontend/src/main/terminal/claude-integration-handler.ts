@@ -435,6 +435,13 @@ export function handleOAuthToken(
     // Extract token from Keychain using the profile's configDir
     const keychainCreds = getCredentialsFromKeychain(profile.configDir, true);
 
+    // Check if there was a keychain access error (not just "not found")
+    if (keychainCreds.error) {
+      console.error('[ClaudeIntegration] Keychain access error:', keychainCreds.error);
+      // Don't retry on keychain failures - they won't resolve with retries
+      return;
+    }
+
     if (keychainCreds.token) {
       // Store the token in our profile store
       const success = profileManager.setProfileToken(
@@ -735,6 +742,180 @@ export function handleClaudeExit(
 }
 
 /**
+ * Shared command execution logic for profile-based invocation
+ * Returns true if command was executed via configDir or temp-file method
+ */
+interface ExecuteProfileCommandOptions {
+  needsEnvOverride: boolean;
+  activeProfile: any;
+  cwdCommand: string;
+  pathPrefix: string;
+  escapedClaudeCmd: string;
+  extraFlags: string | undefined;
+  terminal: TerminalProcess;
+  profileManager: any;
+  projectPath: string | undefined;
+  startTime: number;
+  getWindow: WindowGetter;
+  onSessionCapture: SessionCaptureCallback;
+  logPrefix: string;
+}
+
+function executeProfileCommand(options: ExecuteProfileCommandOptions): boolean {
+  const {
+    needsEnvOverride,
+    activeProfile,
+    cwdCommand,
+    pathPrefix,
+    escapedClaudeCmd,
+    extraFlags,
+    terminal,
+    profileManager,
+    projectPath,
+    startTime,
+    getWindow,
+    onSessionCapture,
+    logPrefix,
+  } = options;
+
+  if (!needsEnvOverride || !activeProfile || activeProfile.isDefault) {
+    return false; // Use default method
+  }
+
+  // Prefer configDir over token because CLAUDE_CONFIG_DIR lets Claude Code
+  // read full Keychain credentials including subscriptionType ("max") and rateLimitTier.
+  // Using CLAUDE_CODE_OAUTH_TOKEN alone lacks tier info, causing "Claude API" display.
+  if (activeProfile.configDir) {
+    const command = buildClaudeShellCommand(
+      cwdCommand,
+      pathPrefix,
+      escapedClaudeCmd,
+      { method: 'config-dir', configDir: activeProfile.configDir },
+      extraFlags
+    );
+    debugLog(`${logPrefix} Executing command (configDir method, history-safe)`);
+    PtyManager.writeToPty(terminal, command);
+    profileManager.markProfileUsed(activeProfile.id);
+    finalizeClaudeInvoke(terminal, activeProfile, projectPath, startTime, getWindow, onSessionCapture);
+    debugLog(`${logPrefix} ========== INVOKE CLAUDE COMPLETE (configDir) ==========`);
+    return true;
+  }
+
+  // Legacy fallback: use temp-file method if only token is available
+  const token = profileManager.getProfileToken(activeProfile.id);
+  debugLog(`${logPrefix} Token retrieval:`, {
+    hasToken: !!token,
+    tokenLength: token?.length,
+  });
+
+  if (token) {
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const tempFile = path.join(
+      os.tmpdir(),
+      `.claude-token-${Date.now()}-${nonce}${getTempFileExtension()}`
+    );
+    debugLog(`${logPrefix} Writing token to temp file:`, tempFile);
+    fs.writeFileSync(tempFile, generateTokenTempFileContent(token), { mode: 0o600 });
+
+    const command = buildClaudeShellCommand(
+      cwdCommand,
+      pathPrefix,
+      escapedClaudeCmd,
+      { method: 'temp-file', tempFile },
+      extraFlags
+    );
+    debugLog(`${logPrefix} Executing command (temp file method, history-safe)`);
+    PtyManager.writeToPty(terminal, command);
+    profileManager.markProfileUsed(activeProfile.id);
+    finalizeClaudeInvoke(terminal, activeProfile, projectPath, startTime, getWindow, onSessionCapture);
+    debugLog(`${logPrefix} ========== INVOKE CLAUDE COMPLETE (temp file) ==========`);
+    return true;
+  }
+
+  debugLog(`${logPrefix} WARNING: No token or configDir available for non-default profile`);
+  return false;
+}
+
+/**
+ * Async version of executeProfileCommand for non-blocking file operations
+ * Returns true if command was executed via configDir or temp-file method
+ */
+async function executeProfileCommandAsync(options: ExecuteProfileCommandOptions): Promise<boolean> {
+  const {
+    needsEnvOverride,
+    activeProfile,
+    cwdCommand,
+    pathPrefix,
+    escapedClaudeCmd,
+    extraFlags,
+    terminal,
+    profileManager,
+    projectPath,
+    startTime,
+    getWindow,
+    onSessionCapture,
+    logPrefix,
+  } = options;
+
+  if (!needsEnvOverride || !activeProfile || activeProfile.isDefault) {
+    return false; // Use default method
+  }
+
+  // Prefer configDir over token because CLAUDE_CONFIG_DIR lets Claude Code
+  // read full Keychain credentials including subscriptionType ("max") and rateLimitTier.
+  // Using CLAUDE_CODE_OAUTH_TOKEN alone lacks tier info, causing "Claude API" display.
+  if (activeProfile.configDir) {
+    const command = buildClaudeShellCommand(
+      cwdCommand,
+      pathPrefix,
+      escapedClaudeCmd,
+      { method: 'config-dir', configDir: activeProfile.configDir },
+      extraFlags
+    );
+    debugLog(`${logPrefix} Executing command (configDir method, history-safe)`);
+    PtyManager.writeToPty(terminal, command);
+    profileManager.markProfileUsed(activeProfile.id);
+    finalizeClaudeInvoke(terminal, activeProfile, projectPath, startTime, getWindow, onSessionCapture);
+    debugLog(`${logPrefix} ========== INVOKE CLAUDE COMPLETE (configDir) ==========`);
+    return true;
+  }
+
+  // Legacy fallback: use temp-file method if only token is available
+  const token = profileManager.getProfileToken(activeProfile.id);
+  debugLog(`${logPrefix} Token retrieval:`, {
+    hasToken: !!token,
+    tokenLength: token?.length,
+  });
+
+  if (token) {
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const tempFile = path.join(
+      os.tmpdir(),
+      `.claude-token-${Date.now()}-${nonce}${getTempFileExtension()}`
+    );
+    debugLog(`${logPrefix} Writing token to temp file:`, tempFile);
+    await fsPromises.writeFile(tempFile, generateTokenTempFileContent(token), { mode: 0o600 });
+
+    const command = buildClaudeShellCommand(
+      cwdCommand,
+      pathPrefix,
+      escapedClaudeCmd,
+      { method: 'temp-file', tempFile },
+      extraFlags
+    );
+    debugLog(`${logPrefix} Executing command (temp file method, history-safe)`);
+    PtyManager.writeToPty(terminal, command);
+    profileManager.markProfileUsed(activeProfile.id);
+    finalizeClaudeInvoke(terminal, activeProfile, projectPath, startTime, getWindow, onSessionCapture);
+    debugLog(`${logPrefix} ========== INVOKE CLAUDE COMPLETE (temp file) ==========`);
+    return true;
+  }
+
+  debugLog(`${logPrefix} WARNING: No token or configDir available for non-default profile`);
+  return false;
+}
+
+/**
  * Invoke Claude with optional profile override
  */
 export function invokeClaude(
@@ -787,7 +968,7 @@ export function invokeClaude(
     const { command: claudeCmd, env: claudeEnv } = getClaudeCliInvocation();
     const escapedClaudeCmd = escapeShellCommand(claudeCmd);
     const pathPrefix = buildPathPrefix(claudeEnv.PATH || '');
-    const needsEnvOverride = profileId && profileId !== previousProfileId;
+    const needsEnvOverride: boolean = !!(profileId && profileId !== previousProfileId);
 
     debugLog('[ClaudeIntegration:invokeClaude] Environment override check:', {
       profileIdProvided: !!profileId,
@@ -795,58 +976,34 @@ export function invokeClaude(
       needsEnvOverride
     });
 
-    if (needsEnvOverride && activeProfile && !activeProfile.isDefault) {
-      // Prefer configDir over token because CLAUDE_CONFIG_DIR lets Claude Code
-      // read full Keychain credentials including subscriptionType ("max") and rateLimitTier.
-      // Using CLAUDE_CODE_OAUTH_TOKEN alone lacks tier info, causing "Claude API" display.
-      if (activeProfile.configDir) {
-        const command = buildClaudeShellCommand(cwdCommand, pathPrefix, escapedClaudeCmd, { method: 'config-dir', configDir: activeProfile.configDir }, extraFlags);
-        debugLog('[ClaudeIntegration:invokeClaude] Executing command (configDir method, history-safe)');
-        // Use PtyManager.writeToPty for safer write with error handling
-        PtyManager.writeToPty(terminal, command);
-        profileManager.markProfileUsed(activeProfile.id);
-        finalizeClaudeInvoke(terminal, activeProfile, projectPath, startTime, getWindow, onSessionCapture);
-        debugLog('[ClaudeIntegration:invokeClaude] ========== INVOKE CLAUDE COMPLETE (configDir) ==========');
-        return;
-      }
+    // Try to execute using profile-specific method (configDir or temp-file)
+    const executed = executeProfileCommand({
+      needsEnvOverride,
+      activeProfile,
+      cwdCommand,
+      pathPrefix,
+      escapedClaudeCmd,
+      extraFlags,
+      terminal,
+      profileManager,
+      projectPath,
+      startTime,
+      getWindow,
+      onSessionCapture,
+      logPrefix: '[ClaudeIntegration:invokeClaude]',
+    });
 
-      // Legacy fallback: use temp-file method if only token is available
-      const token = profileManager.getProfileToken(activeProfile.id);
-      debugLog('[ClaudeIntegration:invokeClaude] Token retrieval:', {
-        hasToken: !!token,
-        tokenLength: token?.length
-      });
-
-      if (token) {
-        const nonce = crypto.randomBytes(8).toString('hex');
-        const tempFile = path.join(os.tmpdir(), `.claude-token-${Date.now()}-${nonce}${getTempFileExtension()}`);
-        debugLog('[ClaudeIntegration:invokeClaude] Writing token to temp file:', tempFile);
-        fs.writeFileSync(
-          tempFile,
-          generateTokenTempFileContent(token),
-          { mode: 0o600 }
-        );
-
-        const command = buildClaudeShellCommand(cwdCommand, pathPrefix, escapedClaudeCmd, { method: 'temp-file', tempFile }, extraFlags);
-        debugLog('[ClaudeIntegration:invokeClaude] Executing command (temp file method, history-safe)');
-        // Use PtyManager.writeToPty for safer write with error handling
-        PtyManager.writeToPty(terminal, command);
-        profileManager.markProfileUsed(activeProfile.id);
-        finalizeClaudeInvoke(terminal, activeProfile, projectPath, startTime, getWindow, onSessionCapture);
-        debugLog('[ClaudeIntegration:invokeClaude] ========== INVOKE CLAUDE COMPLETE (temp file) ==========');
-        return;
-      } else {
-        debugLog('[ClaudeIntegration:invokeClaude] WARNING: No token or configDir available for non-default profile');
-      }
+    if (executed) {
+      return; // Command already executed via configDir or temp-file method
     }
 
+    // Fall back to default method
     if (activeProfile && !activeProfile.isDefault) {
       debugLog('[ClaudeIntegration:invokeClaude] Using terminal environment for non-default profile:', activeProfile.name);
     }
 
     const command = buildClaudeShellCommand(cwdCommand, pathPrefix, escapedClaudeCmd, { method: 'default' }, extraFlags);
     debugLog('[ClaudeIntegration:invokeClaude] Executing command (default method):', command);
-    // Use PtyManager.writeToPty for safer write with error handling
     PtyManager.writeToPty(terminal, command);
 
     if (activeProfile) {
@@ -1015,7 +1172,7 @@ export async function invokeClaudeAsync(
 
     const escapedClaudeCmd = escapeShellCommand(claudeCmd);
     const pathPrefix = buildPathPrefix(claudeEnv.PATH || '');
-    const needsEnvOverride = profileId && profileId !== previousProfileId;
+    const needsEnvOverride: boolean = !!(profileId && profileId !== previousProfileId);
 
     debugLog('[ClaudeIntegration:invokeClaudeAsync] Environment override check:', {
       profileIdProvided: !!profileId,
@@ -1023,58 +1180,34 @@ export async function invokeClaudeAsync(
       needsEnvOverride
     });
 
-    if (needsEnvOverride && activeProfile && !activeProfile.isDefault) {
-      // Prefer configDir over token because CLAUDE_CONFIG_DIR lets Claude Code
-      // read full Keychain credentials including subscriptionType ("max") and rateLimitTier.
-      // Using CLAUDE_CODE_OAUTH_TOKEN alone lacks tier info, causing "Claude API" display.
-      if (activeProfile.configDir) {
-        const command = buildClaudeShellCommand(cwdCommand, pathPrefix, escapedClaudeCmd, { method: 'config-dir', configDir: activeProfile.configDir }, extraFlags);
-        debugLog('[ClaudeIntegration:invokeClaudeAsync] Executing command (configDir method, history-safe)');
-        // Use PtyManager.writeToPty for safer write with error handling
-        PtyManager.writeToPty(terminal, command);
-        profileManager.markProfileUsed(activeProfile.id);
-        finalizeClaudeInvoke(terminal, activeProfile, projectPath, startTime, getWindow, onSessionCapture);
-        debugLog('[ClaudeIntegration:invokeClaudeAsync] ========== INVOKE CLAUDE COMPLETE (configDir) ==========');
-        return;
-      }
+    // Try to execute using profile-specific method (configDir or temp-file) with async file operations
+    const executed = await executeProfileCommandAsync({
+      needsEnvOverride,
+      activeProfile,
+      cwdCommand,
+      pathPrefix,
+      escapedClaudeCmd,
+      extraFlags,
+      terminal,
+      profileManager,
+      projectPath,
+      startTime,
+      getWindow,
+      onSessionCapture,
+      logPrefix: '[ClaudeIntegration:invokeClaudeAsync]',
+    });
 
-      // Legacy fallback: use temp-file method if only token is available
-      const token = profileManager.getProfileToken(activeProfile.id);
-      debugLog('[ClaudeIntegration:invokeClaudeAsync] Token retrieval:', {
-        hasToken: !!token,
-        tokenLength: token?.length
-      });
-
-      if (token) {
-        const nonce = crypto.randomBytes(8).toString('hex');
-        const tempFile = path.join(os.tmpdir(), `.claude-token-${Date.now()}-${nonce}${getTempFileExtension()}`);
-        debugLog('[ClaudeIntegration:invokeClaudeAsync] Writing token to temp file:', tempFile);
-        await fsPromises.writeFile(
-          tempFile,
-          generateTokenTempFileContent(token),
-          { mode: 0o600 }
-        );
-
-        const command = buildClaudeShellCommand(cwdCommand, pathPrefix, escapedClaudeCmd, { method: 'temp-file', tempFile }, extraFlags);
-        debugLog('[ClaudeIntegration:invokeClaudeAsync] Executing command (temp file method, history-safe)');
-        // Use PtyManager.writeToPty for safer write with error handling
-        PtyManager.writeToPty(terminal, command);
-        profileManager.markProfileUsed(activeProfile.id);
-        finalizeClaudeInvoke(terminal, activeProfile, projectPath, startTime, getWindow, onSessionCapture);
-        debugLog('[ClaudeIntegration:invokeClaudeAsync] ========== INVOKE CLAUDE COMPLETE (temp file) ==========');
-        return;
-      } else {
-        debugLog('[ClaudeIntegration:invokeClaudeAsync] WARNING: No token or configDir available for non-default profile');
-      }
+    if (executed) {
+      return; // Command already executed via configDir or temp-file method
     }
 
+    // Fall back to default method
     if (activeProfile && !activeProfile.isDefault) {
       debugLog('[ClaudeIntegration:invokeClaudeAsync] Using terminal environment for non-default profile:', activeProfile.name);
     }
 
     const command = buildClaudeShellCommand(cwdCommand, pathPrefix, escapedClaudeCmd, { method: 'default' }, extraFlags);
     debugLog('[ClaudeIntegration:invokeClaudeAsync] Executing command (default method):', command);
-    // Use PtyManager.writeToPty for safer write with error handling
     PtyManager.writeToPty(terminal, command);
 
     if (activeProfile) {

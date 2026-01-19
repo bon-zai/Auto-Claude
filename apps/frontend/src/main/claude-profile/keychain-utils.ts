@@ -20,6 +20,7 @@ import { isMacOS } from '../platform';
 export interface KeychainCredentials {
   token: string | null;
   email: string | null;
+  error?: string;  // Set when keychain access fails (locked, permission denied, etc.)
 }
 
 /**
@@ -191,9 +192,10 @@ export function getCredentialsFromKeychain(configDir?: string, forceRefresh = fa
       return notFoundResult;
     }
 
-    // Other errors (keychain locked, access denied, etc.) - use generic message
-    console.warn('[KeychainUtils] Keychain access failed for service:', serviceName);
-    const errorResult = { token: null, email: null };
+    // Other errors (keychain locked, access denied, etc.) - return error details
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn('[KeychainUtils] Keychain access failed for service:', serviceName, errorMessage);
+    const errorResult = { token: null, email: null, error: `Keychain access failed: ${errorMessage}` };
     keychainCache.set(serviceName, { credentials: errorResult, timestamp: now });
     return errorResult;
   }
