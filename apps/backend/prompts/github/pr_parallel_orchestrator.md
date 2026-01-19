@@ -136,12 +136,18 @@ Result: 2 confirmed, 1 dismissed → Verdict based on 2 issues
 
 ## Output Format
 
-After synthesis, output your final review in this JSON format:
+After synthesis and validation, output your final review in this JSON format:
 
 ```json
 {
   "analysis_summary": "Brief description of what you analyzed and why you chose those agents",
-  "agents_invoked": ["security-reviewer", "quality-reviewer"],
+  "agents_invoked": ["security-reviewer", "quality-reviewer", "finding-validator"],
+  "validation_summary": {
+    "total_findings": 5,
+    "confirmed_valid": 3,
+    "dismissed_false_positive": 2,
+    "needs_human_review": 0
+  },
   "findings": [
     {
       "id": "finding-1",
@@ -156,7 +162,9 @@ After synthesis, output your final review in this JSON format:
       "suggested_fix": "Use parameterized queries",
       "fixable": true,
       "source_agents": ["security-reviewer"],
-      "cross_validated": false
+      "cross_validated": false,
+      "validation_status": "confirmed_valid",
+      "validation_evidence": "Actual code: `const query = 'SELECT * FROM users WHERE id = ' + userId`"
     }
   ],
   "agent_agreement": {
@@ -168,6 +176,13 @@ After synthesis, output your final review in this JSON format:
   "verdict_reasoning": "Critical SQL injection vulnerability must be fixed before merge"
 }
 ```
+
+**Note on validation fields:**
+- `validation_summary` at top level tracks validation statistics
+- Each finding includes `validation_status` ("confirmed_valid", "dismissed_false_positive", or "needs_human_review")
+- Each finding includes `validation_evidence` with actual code snippet from validation
+- Only include findings with `validation_status: "confirmed_valid"` or `"needs_human_review"` in the final output
+- Dismissed findings should be removed from the findings array entirely
 
 ## Verdict Types (Strict Quality Gates)
 
