@@ -27,8 +27,6 @@ interface AuthTerminalProps {
   onAuthSuccess?: (email?: string) => void;
   /** Callback when authentication fails */
   onAuthError?: (error: string) => void;
-  /** Whether this is a re-authentication (logout first, then login) */
-  isReauth?: boolean;
 }
 
 /**
@@ -43,7 +41,6 @@ export function AuthTerminal({
   onClose,
   onAuthSuccess,
   onAuthError,
-  isReauth = false,
 }: AuthTerminalProps) {
   const { t } = useTranslation('common');
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -172,28 +169,14 @@ export function AuthTerminal({
         // Wait a moment for the shell prompt to be ready, then send the command
         // (without carriage return so user must press Enter)
         // Guard: only send once per component lifecycle
-        //
-        // For re-authentication: run /logout first to clear existing credentials,
-        // then prompt user to run /login. This ensures the browser opens for OAuth.
         if (!loginSentRef.current) {
-          debugLog('Scheduling /login pre-fill', { terminalId, delay: 500, isReauth });
+          debugLog('Scheduling /login pre-fill', { terminalId, delay: 500 });
           loginTimeoutRef.current = setTimeout(() => {
             // Double-check guard in case of race conditions
             if (!loginSentRef.current) {
               loginSentRef.current = true;
-              if (isReauth) {
-                // For re-auth: logout first, then prompt for login
-                // Send logout with Enter to execute it immediately
-                debugLog('Sending /logout + /login for re-auth', { terminalId });
-                window.electronAPI.sendTerminalInput(terminalId, 'claude /logout\r');
-                // After logout completes, pre-fill /login (user presses Enter)
-                setTimeout(() => {
-                  window.electronAPI.sendTerminalInput(terminalId, 'claude /login');
-                }, 1000);
-              } else {
-                debugLog('Sending /login pre-fill NOW', { terminalId });
-                window.electronAPI.sendTerminalInput(terminalId, 'claude /login');
-              }
+              debugLog('Sending /login pre-fill NOW', { terminalId });
+              window.electronAPI.sendTerminalInput(terminalId, 'claude /login');
             } else {
               debugLog('SKIPPED /login pre-fill (already sent)', { terminalId });
             }
