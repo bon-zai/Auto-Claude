@@ -940,6 +940,223 @@ describe('E2E Smoke Tests', () => {
         data: '2.5.0'
       });
     });
+
+    it('should handle settings reset to defaults flow', async () => {
+      await import('../../preload/index');
+      const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
+
+      // Step 1: Get current custom settings
+      const customSettings = createTestSettings({
+        theme: 'dark',
+        telemetry: false,
+        autoUpdate: false,
+        defaultModel: 'opus'
+      });
+      mockIpcRenderer.invoke.mockResolvedValueOnce({
+        success: true,
+        data: customSettings
+      });
+
+      const getSettings = electronAPI['getSettings'] as () => Promise<unknown>;
+      await getSettings();
+
+      // Step 2: Reset to defaults (simulates clicking "Reset to Defaults" button)
+      const defaultSettings = createTestSettings(); // Uses defaults
+      mockIpcRenderer.invoke.mockResolvedValueOnce({
+        success: true,
+        data: defaultSettings
+      });
+
+      const saveSettings = electronAPI['saveSettings'] as (settings: object) => Promise<unknown>;
+      const resetResult = await saveSettings(defaultSettings);
+
+      expect(resetResult).toMatchObject({
+        success: true,
+        data: expect.objectContaining({
+          theme: 'system',
+          telemetry: true,
+          autoUpdate: true,
+          defaultModel: 'sonnet'
+        })
+      });
+    });
+
+    it('should handle settings validation with invalid values', async () => {
+      await import('../../preload/index');
+      const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
+
+      // Attempt to save settings with invalid model
+      const invalidSettings = createTestSettings({ defaultModel: 'invalid-model' });
+      mockIpcRenderer.invoke.mockResolvedValueOnce({
+        success: false,
+        error: 'Invalid model selection: invalid-model'
+      });
+
+      const saveSettings = electronAPI['saveSettings'] as (settings: object) => Promise<unknown>;
+      const result = await saveSettings(invalidSettings);
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Invalid model')
+      });
+    });
+
+    it('should handle partial settings update', async () => {
+      await import('../../preload/index');
+      const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
+
+      // Get current settings first
+      const currentSettings = createTestSettings();
+      mockIpcRenderer.invoke.mockResolvedValueOnce({
+        success: true,
+        data: currentSettings
+      });
+
+      const getSettings = electronAPI['getSettings'] as () => Promise<unknown>;
+      await getSettings();
+
+      // Update only the theme (simulates toggling theme switch)
+      const partialUpdate = { ...currentSettings, theme: 'dark' };
+      mockIpcRenderer.invoke.mockResolvedValueOnce({
+        success: true,
+        data: partialUpdate
+      });
+
+      const saveSettings = electronAPI['saveSettings'] as (settings: object) => Promise<unknown>;
+      const result = await saveSettings(partialUpdate);
+
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith(
+        'settings:save',
+        expect.objectContaining({ theme: 'dark' })
+      );
+      expect(result).toMatchObject({
+        success: true,
+        data: expect.objectContaining({
+          theme: 'dark',
+          // Other settings should remain unchanged
+          telemetry: true,
+          autoUpdate: true
+        })
+      });
+    });
+
+    it('should handle settings migration from older version', async () => {
+      await import('../../preload/index');
+      const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
+
+      // Simulate loading settings from older version (missing new fields)
+      const legacySettings = {
+        theme: 'light',
+        telemetry: true
+        // Missing: autoUpdate, defaultModel (added in newer version)
+      };
+
+      // Main process migrates settings and adds defaults for new fields
+      mockIpcRenderer.invoke.mockResolvedValueOnce({
+        success: true,
+        data: {
+          ...legacySettings,
+          autoUpdate: true, // Default added by migration
+          defaultModel: 'sonnet' // Default added by migration
+        }
+      });
+
+      const getSettings = electronAPI['getSettings'] as () => Promise<unknown>;
+      const result = await getSettings();
+
+      expect(result).toMatchObject({
+        success: true,
+        data: expect.objectContaining({
+          theme: 'light',
+          telemetry: true,
+          autoUpdate: true,
+          defaultModel: 'sonnet'
+        })
+      });
+    });
+
+    it('should handle settings save failure gracefully', async () => {
+      await import('../../preload/index');
+      const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
+
+      // Simulate write failure (e.g., disk full, permissions)
+      mockIpcRenderer.invoke.mockResolvedValueOnce({
+        success: false,
+        error: 'Failed to save settings: Permission denied'
+      });
+
+      const saveSettings = electronAPI['saveSettings'] as (settings: object) => Promise<unknown>;
+      const result = await saveSettings(createTestSettings({ theme: 'dark' }));
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Failed to save settings')
+      });
+    });
+
+    it('should handle concurrent settings operations', async () => {
+      await import('../../preload/index');
+      const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
+
+      const getSettings = electronAPI['getSettings'] as () => Promise<unknown>;
+      const saveSettings = electronAPI['saveSettings'] as (settings: object) => Promise<unknown>;
+
+      // Simulate multiple concurrent settings operations
+      mockIpcRenderer.invoke
+        .mockResolvedValueOnce({ success: true, data: createTestSettings() })
+        .mockResolvedValueOnce({
+          success: true,
+          data: createTestSettings({ theme: 'dark' })
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          data: createTestSettings({ theme: 'dark' })
+        });
+
+      // Fire concurrent operations
+      const [getResult, saveResult, verifyResult] = await Promise.all([
+        getSettings(),
+        saveSettings(createTestSettings({ theme: 'dark' })),
+        getSettings()
+      ]);
+
+      expect(getResult).toMatchObject({ success: true });
+      expect(saveResult).toMatchObject({
+        success: true,
+        data: expect.objectContaining({ theme: 'dark' })
+      });
+      expect(verifyResult).toMatchObject({ success: true });
+    });
+
+    it('should handle theme toggle cycle (system -> light -> dark -> system)', async () => {
+      await import('../../preload/index');
+      const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
+
+      const saveSettings = electronAPI['saveSettings'] as (settings: object) => Promise<unknown>;
+
+      // Start with system theme
+      let currentTheme = 'system';
+      const themeProgression = ['light', 'dark', 'system'];
+
+      for (const nextTheme of themeProgression) {
+        mockIpcRenderer.invoke.mockResolvedValueOnce({
+          success: true,
+          data: createTestSettings({ theme: nextTheme })
+        });
+
+        const result = await saveSettings(createTestSettings({ theme: nextTheme }));
+
+        expect(result).toMatchObject({
+          success: true,
+          data: expect.objectContaining({ theme: nextTheme })
+        });
+
+        currentTheme = nextTheme;
+      }
+
+      // Verify we cycled back to system
+      expect(currentTheme).toBe('system');
+    });
   });
 
   describe('QA Review Flow', () => {
