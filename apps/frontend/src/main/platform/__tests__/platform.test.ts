@@ -188,6 +188,97 @@ describe('Platform Module', () => {
       expect(dirs.system).toContain('/usr/bin');
       expect(dirs.system).toContain('/snap/bin');
     });
+
+    it('has user and system arrays on all platforms', () => {
+      // Test Windows
+      mockPlatform('win32');
+      let dirs = getBinaryDirectories();
+      expect(Array.isArray(dirs.user)).toBe(true);
+      expect(Array.isArray(dirs.system)).toBe(true);
+      expect(dirs.user.length).toBeGreaterThan(0);
+      expect(dirs.system.length).toBeGreaterThan(0);
+
+      // Test macOS
+      mockPlatform('darwin');
+      dirs = getBinaryDirectories();
+      expect(Array.isArray(dirs.user)).toBe(true);
+      expect(Array.isArray(dirs.system)).toBe(true);
+      expect(dirs.user.length).toBeGreaterThan(0);
+      expect(dirs.system.length).toBeGreaterThan(0);
+
+      // Test Linux
+      mockPlatform('linux');
+      dirs = getBinaryDirectories();
+      expect(Array.isArray(dirs.user)).toBe(true);
+      expect(Array.isArray(dirs.system)).toBe(true);
+      expect(dirs.user.length).toBeGreaterThan(0);
+      expect(dirs.system.length).toBeGreaterThan(0);
+    });
+
+    it('includes user-specific directories with home paths', () => {
+      // macOS user dirs
+      mockPlatform('darwin');
+      let dirs = getBinaryDirectories();
+      const hasMacUserDir = dirs.user.some(dir =>
+        dir.includes('.local/bin') || dir.includes('bin')
+      );
+      expect(hasMacUserDir).toBe(true);
+
+      // Linux user dirs
+      mockPlatform('linux');
+      dirs = getBinaryDirectories();
+      const hasLinuxUserDir = dirs.user.some(dir =>
+        dir.includes('.local/bin') || dir.includes('bin')
+      );
+      expect(hasLinuxUserDir).toBe(true);
+
+      // Windows user dirs
+      mockPlatform('win32');
+      dirs = getBinaryDirectories();
+      const hasWindowsUserDir = dirs.user.some(dir =>
+        dir.includes('AppData') || dir.includes('.local')
+      );
+      expect(hasWindowsUserDir).toBe(true);
+    });
+
+    it('Windows includes npm global directory', () => {
+      mockPlatform('win32');
+      const dirs = getBinaryDirectories();
+
+      const hasNpmDir = dirs.user.some(dir =>
+        dir.includes('Roaming') && dir.includes('npm')
+      );
+      expect(hasNpmDir).toBe(true);
+    });
+
+    it('Windows includes System32 directory', () => {
+      mockPlatform('win32');
+      const dirs = getBinaryDirectories();
+
+      const hasSystem32 = dirs.system.some(dir =>
+        dir.includes('System32')
+      );
+      expect(hasSystem32).toBe(true);
+    });
+
+    it('Linux includes /usr/local/bin', () => {
+      mockPlatform('linux');
+      const dirs = getBinaryDirectories();
+
+      expect(dirs.system).toContain('/usr/local/bin');
+    });
+
+    it('all directory paths are strings', () => {
+      for (const platform of ['win32', 'darwin', 'linux'] as NodeJS.Platform[]) {
+        mockPlatform(platform);
+        const dirs = getBinaryDirectories();
+
+        for (const dir of [...dirs.user, ...dirs.system]) {
+          expect(typeof dir).toBe('string');
+          expect(dir.length).toBeGreaterThan(0);
+        }
+      }
+    });
   });
 
   describe('Homebrew Path', () => {
@@ -221,11 +312,57 @@ describe('Platform Module', () => {
       expect(isValidShell).toBe(true);
     });
 
-    it('returns shell config on Unix', () => {
+    it('returns shell config on macOS', () => {
       mockPlatform('darwin');
       const config = getShellConfig();
 
       expect(config.args).toEqual(['-l']);
+      expect(config.env).toEqual({});
+      expect(typeof config.executable).toBe('string');
+    });
+
+    it('returns shell config on Linux', () => {
+      mockPlatform('linux');
+      const config = getShellConfig();
+
+      expect(config.args).toEqual(['-l']);
+      expect(config.env).toEqual({});
+      expect(typeof config.executable).toBe('string');
+    });
+
+    it('shell config has required properties on all platforms', () => {
+      // Test Windows
+      mockPlatform('win32');
+      let config = getShellConfig();
+      expect(config).toHaveProperty('executable');
+      expect(config).toHaveProperty('args');
+      expect(config).toHaveProperty('env');
+      expect(Array.isArray(config.args)).toBe(true);
+      expect(typeof config.env).toBe('object');
+
+      // Test macOS
+      mockPlatform('darwin');
+      config = getShellConfig();
+      expect(config).toHaveProperty('executable');
+      expect(config).toHaveProperty('args');
+      expect(config).toHaveProperty('env');
+      expect(Array.isArray(config.args)).toBe(true);
+      expect(typeof config.env).toBe('object');
+
+      // Test Linux
+      mockPlatform('linux');
+      config = getShellConfig();
+      expect(config).toHaveProperty('executable');
+      expect(config).toHaveProperty('args');
+      expect(config).toHaveProperty('env');
+      expect(Array.isArray(config.args)).toBe(true);
+      expect(typeof config.env).toBe('object');
+    });
+
+    it('Unix shell uses login shell flag', () => {
+      mockPlatform('darwin');
+      const config = getShellConfig();
+      expect(config.args).toContain('-l');
     });
   });
 
@@ -233,17 +370,52 @@ describe('Platform Module', () => {
     it('returns true for .cmd files on Windows', () => {
       mockPlatform('win32');
       expect(requiresShell('npm.cmd')).toBe(true);
-      expect(requiresShell('script.bat')).toBe(true);
+      expect(requiresShell('script.cmd')).toBe(true);
     });
 
-    it('returns false for executables on Windows', () => {
+    it('returns true for .bat files on Windows', () => {
+      mockPlatform('win32');
+      expect(requiresShell('script.bat')).toBe(true);
+      expect(requiresShell('run.bat')).toBe(true);
+    });
+
+    it('returns true for .ps1 files on Windows', () => {
+      mockPlatform('win32');
+      expect(requiresShell('script.ps1')).toBe(true);
+      expect(requiresShell('setup.ps1')).toBe(true);
+    });
+
+    it('returns false for .exe files on Windows', () => {
       mockPlatform('win32');
       expect(requiresShell('node.exe')).toBe(false);
+      expect(requiresShell('claude.exe')).toBe(false);
     });
 
-    it('returns false on Unix', () => {
+    it('returns false for executables without extension on Windows', () => {
+      mockPlatform('win32');
+      expect(requiresShell('node')).toBe(false);
+    });
+
+    it('returns false on macOS regardless of extension', () => {
       mockPlatform('darwin');
       expect(requiresShell('npm')).toBe(false);
+      expect(requiresShell('script.sh')).toBe(false);
+      expect(requiresShell('node')).toBe(false);
+    });
+
+    it('returns false on Linux regardless of extension', () => {
+      mockPlatform('linux');
+      expect(requiresShell('npm')).toBe(false);
+      expect(requiresShell('script.sh')).toBe(false);
+      expect(requiresShell('node')).toBe(false);
+    });
+
+    it('handles case-insensitive extensions on Windows', () => {
+      mockPlatform('win32');
+      expect(requiresShell('script.CMD')).toBe(true);
+      expect(requiresShell('script.Cmd')).toBe(true);
+      expect(requiresShell('script.BAT')).toBe(true);
+      expect(requiresShell('script.PS1')).toBe(true);
     });
   });
 
@@ -254,10 +426,26 @@ describe('Platform Module', () => {
       expect(getNpxCommand()).toBe('npx.cmd');
     });
 
-    it('returns npm on Unix', () => {
+    it('returns npm on macOS', () => {
       mockPlatform('darwin');
       expect(getNpmCommand()).toBe('npm');
       expect(getNpxCommand()).toBe('npx');
+    });
+
+    it('returns npm on Linux', () => {
+      mockPlatform('linux');
+      expect(getNpmCommand()).toBe('npm');
+      expect(getNpxCommand()).toBe('npx');
+    });
+
+    it('returns consistent commands across multiple calls', () => {
+      mockPlatform('win32');
+      const npm1 = getNpmCommand();
+      const npm2 = getNpmCommand();
+      const npx1 = getNpxCommand();
+      const npx2 = getNpxCommand();
+      expect(npm1).toBe(npm2);
+      expect(npx1).toBe(npx2);
     });
   });
 
