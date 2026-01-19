@@ -785,6 +785,43 @@ The SDK will run invoked agents in parallel automatically.
             # Deduplicate findings
             unique_findings = self._deduplicate_findings(findings)
 
+            # Apply programmatic evidence and scope filters
+            # These catch edge cases that slip through the finding-validator
+            changed_file_paths = [f.path for f in context.changed_files]
+            validated_findings = []
+            filtered_findings = []
+
+            for finding in unique_findings:
+                # Check evidence quality
+                evidence_valid, evidence_reason = _validate_finding_evidence(finding)
+                if not evidence_valid:
+                    logger.info(
+                        f"[PRReview] Filtered finding {finding.id}: {evidence_reason}"
+                    )
+                    filtered_findings.append((finding, evidence_reason))
+                    continue
+
+                # Check scope
+                scope_valid, scope_reason = _is_finding_in_scope(
+                    finding, changed_file_paths
+                )
+                if not scope_valid:
+                    logger.info(
+                        f"[PRReview] Filtered finding {finding.id}: {scope_reason}"
+                    )
+                    filtered_findings.append((finding, scope_reason))
+                    continue
+
+                validated_findings.append(finding)
+
+            logger.info(
+                f"[PRReview] Findings: {len(validated_findings)} valid, "
+                f"{len(filtered_findings)} filtered"
+            )
+
+            # Use validated findings for verdict and summary
+            unique_findings = validated_findings
+
             logger.info(
                 f"[ParallelOrchestrator] Review complete: {len(unique_findings)} findings"
             )
