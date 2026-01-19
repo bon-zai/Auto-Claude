@@ -71,6 +71,8 @@ export interface SpecCreationMetadata {
   thinkingLevel?: 'none' | 'low' | 'medium' | 'high' | 'ultrathink';
   // Workspace mode - whether to use worktree isolation
   useWorktree?: boolean; // If false, use --direct mode (no worktree isolation)
+  // Methodology plugin name (e.g., 'native', 'bmad')
+  methodology?: string;
 }
 
 export interface IdeationProgressData {

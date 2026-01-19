@@ -173,6 +173,11 @@ export class AgentManager extends EventEmitter {
       args.push('--direct');
     }
 
+    // Pass methodology if specified (native, bmad, etc.)
+    if (metadata?.methodology) {
+      args.push('--methodology', metadata.methodology);
+    }
+
     // Store context for potential restart
     this.storeTaskContext(taskId, projectPath, '', {}, true, taskDescription, specDir, metadata, baseBranch);
 

@@ -111,6 +111,198 @@ from spec import SpecOrchestrator
 from ui import Icons, highlight, muted, print_section, print_status
 
 
+def _run_methodology_pipeline(
+    methodology_name: str,
+    project_dir: Path,
+    task_description: str | None,
+    spec_dir: Path | None,
+    complexity: str | None,
+    auto_approve: bool,
+    base_branch: str | None,
+    direct_mode: bool,
+) -> None:
+    """Run a non-native methodology pipeline (e.g., BMAD).
+
+    This function handles the full methodology pipeline execution for
+    methodologies other than 'native'. It sets up the methodology runner,
+    creates the execution context, and runs the pipeline using FullAutoExecutor.
+
+    Args:
+        methodology_name: Name of the methodology to run (e.g., 'bmad')
+        project_dir: Path to the project directory
+        task_description: Task description for the methodology
+        spec_dir: Optional existing spec directory
+        complexity: Optional complexity level override
+        auto_approve: Whether to auto-approve checkpoints
+        base_branch: Base branch for worktree creation
+        direct_mode: Whether to run in direct mode (no worktree)
+    """
+    import json as json_lib
+
+    print_section(f"RUNNING {methodology_name.upper()} METHODOLOGY", Icons.LIGHTNING)
+
+    try:
+        # Import methodology system components
+        from apps.backend.core.executors import FullAutoExecutor
+        from apps.backend.methodologies.protocols import (
+            ComplexityLevel,
+            ExecutionMode,
+            RunContext,
+            TaskConfig,
+        )
+        from apps.backend.methodologies.registry import MethodologyRegistryImpl
+
+        # Initialize the methodology registry
+        verified_plugins_dir = Path(__file__).parent.parent / "methodologies"
+        registry = MethodologyRegistryImpl(
+            verified_plugins_dir=verified_plugins_dir,
+        )
+
+        # Get the methodology runner
+        debug("spec_runner", f"Loading methodology runner: {methodology_name}")
+        runner = registry.get_methodology(methodology_name)
+
+        # Create or use existing spec directory
+        if spec_dir is None:
+            # Create a new spec directory
+            specs_base = project_dir / ".auto-claude" / "specs"
+            specs_base.mkdir(parents=True, exist_ok=True)
+
+            # Generate spec number
+            existing_specs = list(specs_base.glob("*"))
+            next_num = len(existing_specs) + 1
+            spec_name = f"{next_num:03d}-{methodology_name}-task"
+            spec_dir = specs_base / spec_name
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            debug("spec_runner", f"Created spec directory: {spec_dir}")
+        else:
+            spec_dir.mkdir(parents=True, exist_ok=True)
+
+        # Determine complexity level
+        complexity_level = ComplexityLevel.STANDARD
+        if complexity:
+            complexity_map = {
+                "quick": ComplexityLevel.QUICK,
+                "simple": ComplexityLevel.QUICK,
+                "standard": ComplexityLevel.STANDARD,
+                "complex": ComplexityLevel.COMPLEX,
+            }
+            complexity_level = complexity_map.get(complexity.lower(), ComplexityLevel.STANDARD)
+
+        # Create task configuration
+        task_config = TaskConfig(
+            complexity=complexity_level,
+            execution_mode=ExecutionMode.FULL_AUTO,
+            task_id=spec_dir.name,
+            task_name=task_description[:50] if task_description else "Methodology Task",
+            metadata={
+                "spec_dir": str(spec_dir),
+                "project_dir": str(project_dir),
+                "task_description": task_description or "",
+                "methodology": methodology_name,
+                "auto_approve": auto_approve,
+            },
+        )
+
+        # Create mock services for the context
+        # In production, these would be real service implementations
+        class MockWorkspaceService:
+            def __init__(self, project_root: str):
+                self._project_root = project_root
+
+            def get_project_root(self) -> str:
+                return self._project_root
+
+        class MockMemoryService:
+            def get_context(self, query: str) -> str:
+                return f"Context for: {query}"
+
+        class MockProgressService:
+            def update(self, phase_id: str, progress: float, message: str) -> None:
+                print(f"  [{phase_id}] {progress:.0%} - {message}")
+
+            def emit(self, event) -> None:
+                pass
+
+        class MockCheckpointService:
+            def create_checkpoint(self, checkpoint_id: str, data: dict) -> None:
+                debug("spec_runner", f"Checkpoint: {checkpoint_id}")
+
+        class MockLLMService:
+            def generate(self, prompt: str) -> str:
+                return f"Response to: {prompt}"
+
+        # Create run context
+        context = RunContext(
+            workspace=MockWorkspaceService(str(project_dir)),
+            memory=MockMemoryService(),
+            progress=MockProgressService(),
+            checkpoint=MockCheckpointService(),
+            llm=MockLLMService(),
+            task_config=task_config,
+        )
+
+        # Initialize the runner
+        debug("spec_runner", "Initializing methodology runner")
+        runner.initialize(context)
+
+        # Create and run the executor
+        debug("spec_runner", "Creating FullAutoExecutor")
+        executor = FullAutoExecutor(
+            runner=runner,
+            context=context,
+            task_config=task_config,
+        )
+
+        print(f"\nExecuting {methodology_name.upper()} phases...")
+        print(f"Spec directory: {spec_dir}")
+        print()
+
+        # Run the methodology pipeline
+        result = asyncio.run(executor.execute())
+
+        if result.status == "completed":
+            debug_success("spec_runner", f"{methodology_name.upper()} pipeline completed successfully")
+            print()
+            print_status(f"{methodology_name.upper()} pipeline completed successfully!", "success")
+
+            # Save task metadata
+            metadata_path = spec_dir / "task_metadata.json"
+            metadata = {
+                "methodology": methodology_name,
+                "task_description": task_description or "",
+                "complexity": complexity_level.value,
+                "status": "completed",
+            }
+            with open(metadata_path, "w") as f:
+                json_lib.dump(metadata, f, indent=2)
+
+            # List generated artifacts
+            if result.artifacts:
+                print("\nGenerated artifacts:")
+                for artifact in result.artifacts:
+                    print(f"  - {artifact}")
+        else:
+            debug_error("spec_runner", f"{methodology_name.upper()} pipeline failed: {result.error}")
+            print()
+            print_status(f"{methodology_name.upper()} pipeline failed: {result.error}", "error")
+            sys.exit(1)
+
+    except ImportError as e:
+        debug_error("spec_runner", f"Failed to import methodology system: {e}")
+        print_status(f"Methodology system not available: {e}", "error")
+        print()
+        print(f"  {muted('The methodology plugin system may not be installed.')}")
+        print(f"  {muted('Falling back to native methodology is not supported for this task.')}")
+        sys.exit(1)
+    except Exception as e:
+        debug_error("spec_runner", f"Methodology pipeline error: {e}")
+        print_status(f"Methodology pipeline error: {e}", "error")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 def main():
     """CLI entry point."""
     debug_section("spec_runner", "Spec Runner CLI")
@@ -216,6 +408,12 @@ Examples:
         action="store_true",
         help="Build directly in project without worktree isolation (default: use isolated worktree)",
     )
+    parser.add_argument(
+        "--methodology",
+        type=str,
+        default="native",
+        help="Methodology to use for task execution (native, bmad, etc.)",
+    )
 
     args = parser.parse_args()
 
@@ -265,6 +463,29 @@ Examples:
     # Resolve model shorthand to full model ID
     resolved_model = resolve_model_id(args.model)
 
+    # Route to appropriate methodology runner
+    if args.methodology and args.methodology.lower() != "native":
+        debug(
+            "spec_runner",
+            f"Using {args.methodology} methodology",
+            project_dir=str(project_dir),
+            task_description=task_description[:200] if task_description else None,
+            methodology=args.methodology,
+        )
+
+        # Run non-native methodology (e.g., BMAD)
+        _run_methodology_pipeline(
+            methodology_name=args.methodology,
+            project_dir=project_dir,
+            task_description=task_description,
+            spec_dir=args.spec_dir,
+            complexity=args.complexity,
+            auto_approve=args.auto_approve,
+            base_branch=args.base_branch,
+            direct_mode=args.direct,
+        )
+        return  # Exit after methodology pipeline completes
+
     debug(
         "spec_runner",
         "Creating spec orchestrator",
@@ -307,6 +528,32 @@ Examples:
             "Spec creation succeeded",
             spec_dir=str(orchestrator.spec_dir),
         )
+
+        # Save/update methodology in task_metadata.json
+        # This ensures the methodology is persisted for run.py to read
+        metadata_path = orchestrator.spec_dir / "task_metadata.json"
+        if metadata_path.exists():
+            # Update existing metadata
+            import json as json_lib
+            try:
+                with open(metadata_path) as f:
+                    metadata = json_lib.load(f)
+                metadata["methodology"] = args.methodology
+                with open(metadata_path, "w") as f:
+                    json_lib.dump(metadata, f, indent=2)
+                debug("spec_runner", f"Updated task_metadata.json with methodology: {args.methodology}")
+            except Exception as e:
+                debug_error("spec_runner", f"Failed to update task_metadata.json: {e}")
+        else:
+            # Create minimal metadata with methodology
+            import json as json_lib
+            metadata = {"methodology": args.methodology}
+            try:
+                with open(metadata_path, "w") as f:
+                    json_lib.dump(metadata, f, indent=2)
+                debug("spec_runner", f"Created task_metadata.json with methodology: {args.methodology}")
+            except Exception as e:
+                debug_error("spec_runner", f"Failed to create task_metadata.json: {e}")
 
         # Auto-start build unless --no-build is specified
         if not args.no_build:

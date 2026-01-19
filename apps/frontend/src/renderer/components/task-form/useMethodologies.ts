@@ -22,6 +22,15 @@ const STATIC_METHODOLOGIES: MethodologyInfo[] = [
     execution_modes: ['full_auto', 'semi_auto'],
     is_verified: true,
   },
+  {
+    name: 'bmad',
+    version: '1.0.0',
+    description: 'BMAD (Business Model Agile Development) - structured approach with PRD, architecture, and story-driven development',
+    author: 'BMad',
+    complexity_levels: ['quick', 'standard', 'complex'],
+    execution_modes: ['full_auto', 'semi_auto'],
+    is_verified: true,
+  },
 ];
 
 export interface UseMethodologiesResult {
