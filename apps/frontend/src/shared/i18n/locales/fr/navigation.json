@@ -79,5 +79,18 @@
     "pathChangeWarningDescription": "Le changement d'installation CLI utilisera un binaire Claude Code différent. Les sessions en cours continueront à utiliser l'installation précédente jusqu'à leur redémarrage.",
     "switchInstallationConfirm": "Changer",
     "versionUnknown": "version inconnue"
+  },
+  "accountProfile": {
+    "title": "Limites d'utilisation",
+    "loading": "Chargement des données d'utilisation...",
+    "error": "Échec du chargement des données d'utilisation",
+    "noData": "Aucune donnée d'utilisation disponible",
+    "viewUsage": "Voir l'utilisation des limites",
+    "noProfile": "Aucun profil",
+    "sessionUsage": "Utilisation de session",
+    "weeklyUsage": "Hebdomadaire (Tous les modèles)",
+    "sonnetUsage": "Hebdomadaire (Sonnet uniquement)",
+    "resetsAt": "Réinitialisation à {{time}}",
+    "lastUpdated": "Dernière mise à jour {{time}}"
   }
 }
