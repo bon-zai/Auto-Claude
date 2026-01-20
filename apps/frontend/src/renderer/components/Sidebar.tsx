@@ -45,7 +45,11 @@ import {
   initializeProject
 } from '../stores/project-store';
 import { useSettingsStore } from '../stores/settings-store';
-import { useProjectEnvStore } from '../stores/project-env-store';
+import {
+  useProjectEnvStore,
+  loadProjectEnvConfig,
+  clearProjectEnvConfig
+} from '../stores/project-env-store';
 import { AddProjectModal } from './AddProjectModal';
 import { GitSetupModal } from './GitSetupModal';
 import { RateLimitIndicator } from './RateLimitIndicator';
@@ -117,6 +121,7 @@ export function Sidebar({
   // Subscribe to project-env-store for reactive GitHub/GitLab tab visibility
   const githubEnabled = useProjectEnvStore((state) => state.envConfig?.githubEnabled ?? false);
   const gitlabEnabled = useProjectEnvStore((state) => state.envConfig?.gitlabEnabled ?? false);
+  const storeProjectId = useProjectEnvStore((state) => state.projectId);
 
   // Compute visible nav items based on GitHub/GitLab enabled state from store
   const visibleNavItems = useMemo(() => {
@@ -132,6 +137,22 @@ export function Sidebar({
 
     return items;
   }, [githubEnabled, gitlabEnabled]);
+
+  // Load envConfig when project changes to ensure store is populated
+  useEffect(() => {
+    const initializeEnvConfig = async () => {
+      if (selectedProject?.id && selectedProject?.autoBuildPath) {
+        // Only reload if the project ID differs from what's in the store
+        if (selectedProject.id !== storeProjectId) {
+          await loadProjectEnvConfig(selectedProject.id);
+        }
+      } else {
+        // Clear the store if no project is selected or has no autoBuildPath
+        clearProjectEnvConfig();
+      }
+    };
+    initializeEnvConfig();
+  }, [selectedProject?.id, selectedProject?.autoBuildPath, storeProjectId]);
 
   // Keyboard shortcuts
   useEffect(() => {
