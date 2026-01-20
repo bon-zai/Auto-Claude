@@ -116,8 +116,8 @@ async def get_graphiti_context(
 
     memory = None
     try:
-        # Use centralized helper for GraphitiMemory instantiation
-        memory = get_graphiti_memory(spec_dir, project_dir)
+        # Use centralized helper for GraphitiMemory instantiation (async)
+        memory = await get_graphiti_memory(spec_dir, project_dir)
         if memory is None:
             if is_debug_enabled():
                 debug_warning("memory", "GraphitiMemory not available for context retrieval")
@@ -338,8 +338,8 @@ async def save_session_memory(
 
         memory = None
         try:
-            # Use centralized helper for GraphitiMemory instantiation
-            memory = get_graphiti_memory(spec_dir, project_dir)
+            # Use centralized helper for GraphitiMemory instantiation (async)
+            memory = await get_graphiti_memory(spec_dir, project_dir)
             if memory is None:
                 if is_debug_enabled():
                     debug_warning("memory", "GraphitiMemory not available")
