@@ -18,6 +18,7 @@
  */
 
 import { autoUpdater } from 'electron-updater';
+import type { UpdateInfo } from 'electron-updater';
 import { app, net } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../shared/constants';
@@ -40,6 +41,33 @@ type UpdateChannel = 'latest' | 'beta';
 
 // Store interval ID for cleanup during shutdown
 let periodicCheckIntervalId: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Convert releaseNotes to a markdown string.
+ * Handles string, ReleaseNoteInfo[], null, and undefined formats.
+ */
+function formatReleaseNotes(
+  releaseNotes: UpdateInfo['releaseNotes']
+): string | undefined {
+  // Return undefined for null/undefined
+  if (releaseNotes == null) {
+    return undefined;
+  }
+
+  // Return strings as-is
+  if (typeof releaseNotes === 'string') {
+    return releaseNotes;
+  }
+
+  // Convert ReleaseNoteInfo[] to formatted markdown
+  if (Array.isArray(releaseNotes)) {
+    return releaseNotes
+      .map((note) => `## ${note.version}\n\n${note.note}`)
+      .join('\n\n');
+  }
+
+  return undefined;
+}
 
 /**
  * Set the update channel for electron-updater.
@@ -107,7 +135,7 @@ export function initializeAppUpdater(window: BrowserWindow, betaUpdates = false)
     if (mainWindow) {
       mainWindow.webContents.send(IPC_CHANNELS.APP_UPDATE_AVAILABLE, {
         version: info.version,
-        releaseNotes: info.releaseNotes,
+        releaseNotes: formatReleaseNotes(info.releaseNotes),
         releaseDate: info.releaseDate
       });
     }
@@ -117,16 +145,15 @@ export function initializeAppUpdater(window: BrowserWindow, betaUpdates = false)
   autoUpdater.on('update-downloaded', (info) => {
     console.warn('[app-updater] Update downloaded:', info.version);
     // Store downloaded update info so it persists across Settings page navigations
-    // releaseNotes can be string | ReleaseNoteInfo[] | null | undefined, only use if string
     downloadedUpdateInfo = {
       version: info.version,
-      releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined,
+      releaseNotes: formatReleaseNotes(info.releaseNotes),
       releaseDate: info.releaseDate
     };
     if (mainWindow) {
       mainWindow.webContents.send(IPC_CHANNELS.APP_UPDATE_DOWNLOADED, {
         version: info.version,
-        releaseNotes: info.releaseNotes,
+        releaseNotes: formatReleaseNotes(info.releaseNotes),
         releaseDate: info.releaseDate
       });
     }
@@ -231,10 +258,9 @@ export async function checkForUpdates(): Promise<AppUpdateInfo | null> {
       return null;
     }
 
-    // releaseNotes can be string | ReleaseNoteInfo[] | null | undefined, only use if string
     return {
       version: result.updateInfo.version,
-      releaseNotes: typeof result.updateInfo.releaseNotes === 'string' ? result.updateInfo.releaseNotes : undefined,
+      releaseNotes: formatReleaseNotes(result.updateInfo.releaseNotes),
       releaseDate: result.updateInfo.releaseDate
     };
   } catch (error) {
