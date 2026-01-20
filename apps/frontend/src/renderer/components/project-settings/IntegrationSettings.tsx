@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Zap,
   Eye,
@@ -79,6 +79,29 @@ export function IntegrationSettings({
   const [branches, setBranches] = useState<string[]>([]);
   const [isLoadingBranches, setIsLoadingBranches] = useState(false);
 
+  // Load branches function wrapped in useCallback
+  const loadBranches = useCallback(async () => {
+    setIsLoadingBranches(true);
+    try {
+      const result = await window.electronAPI.getGitBranches(project.path);
+      if (result.success && result.data) {
+        setBranches(result.data);
+        // Auto-detect main branch if not set
+        if (!settings.mainBranch) {
+          const detectResult = await window.electronAPI.detectMainBranch(project.path);
+          if (detectResult.success && detectResult.data !== null && detectResult.data !== undefined) {
+            const detectedBranch = detectResult.data;
+            setSettings(prev => ({ ...prev, mainBranch: detectedBranch }));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load branches:', error);
+    } finally {
+      setIsLoadingBranches(false);
+    }
+  }, [project.path, settings.mainBranch, setSettings]);
+
   // Load branches when GitHub section expands or GitHub connection changes
   useEffect(() => {
     // Only load branches when:
@@ -92,28 +115,7 @@ export function IntegrationSettings({
     if (gitHubConnectionStatus?.connected) {
       loadBranches();
     }
-  }, [githubExpanded, project.path, envConfig?.githubEnabled, envConfig?.githubRepo, gitHubConnectionStatus?.connected]);
-
-  const loadBranches = async () => {
-    setIsLoadingBranches(true);
-    try {
-      const result = await window.electronAPI.getGitBranches(project.path);
-      if (result.success && result.data) {
-        setBranches(result.data);
-        // Auto-detect main branch if not set
-        if (!settings.mainBranch) {
-          const detectResult = await window.electronAPI.detectMainBranch(project.path);
-          if (detectResult.success && detectResult.data) {
-            setSettings(prev => ({ ...prev, mainBranch: detectResult.data! }));
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load branches:', error);
-    } finally {
-      setIsLoadingBranches(false);
-    }
-  };
+  }, [githubExpanded, project.path, envConfig?.githubEnabled, envConfig?.githubRepo, gitHubConnectionStatus?.connected, loadBranches]);
 
   if (!envConfig) return null;
 
