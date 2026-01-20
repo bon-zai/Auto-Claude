@@ -153,7 +153,7 @@ export interface AuthFailureInfo {
   originalError?: string;
   /** Task ID if applicable (for task-related auth failures) */
   taskId?: string;
-  /** When detected */
+  /** When detected (Note: serialized as ISO string over IPC) */
   detectedAt: Date;
 }
 
