@@ -3,7 +3,14 @@
  * Claude models, thinking levels, memory backends, and agent profiles
  */
 
-import type { AgentProfile, PhaseModelConfig, FeatureModelConfig, FeatureThinkingConfig } from '../types/settings';
+import type {
+  AgentProfile,
+  PhaseModelConfig,
+  FeatureModelConfig,
+  FeatureThinkingConfig,
+  BmadPhaseModelConfig,
+  BmadPhaseThinkingConfig,
+} from '../types/settings';
 
 // ============================================
 // Available Models
@@ -114,6 +121,113 @@ export const QUICK_PHASE_THINKING: import('../types/settings').PhaseThinkingConf
 // Default phase configuration (used for fallback, matches 'Balanced' profile for cost-effectiveness)
 export const DEFAULT_PHASE_MODELS: PhaseModelConfig = BALANCED_PHASE_MODELS;
 export const DEFAULT_PHASE_THINKING: import('../types/settings').PhaseThinkingConfig = BALANCED_PHASE_THINKING;
+
+// ============================================
+// BMAD Methodology Phase Configurations
+// ============================================
+
+// Auto (Optimized) - Opus with optimized thinking per BMAD phase
+export const BMAD_AUTO_PHASE_MODELS: BmadPhaseModelConfig = {
+  analyze: 'opus',
+  prd: 'opus',
+  architecture: 'opus',
+  epics: 'opus',
+  stories: 'sonnet',    // Stories can use Sonnet for efficiency
+  dev: 'opus',
+  review: 'opus'
+};
+
+export const BMAD_AUTO_PHASE_THINKING: BmadPhaseThinkingConfig = {
+  analyze: 'high',       // Deep analysis of project structure
+  prd: 'ultrathink',     // Comprehensive PRD creation
+  architecture: 'ultrathink', // Deep architectural thinking
+  epics: 'high',         // Strategic epic breakdown
+  stories: 'medium',     // Story preparation
+  dev: 'low',            // Faster coding iterations
+  review: 'medium'       // Thorough but efficient review
+};
+
+// Complex Tasks - Opus with ultrathink across all BMAD phases
+export const BMAD_COMPLEX_PHASE_MODELS: BmadPhaseModelConfig = {
+  analyze: 'opus',
+  prd: 'opus',
+  architecture: 'opus',
+  epics: 'opus',
+  stories: 'opus',
+  dev: 'opus',
+  review: 'opus'
+};
+
+export const BMAD_COMPLEX_PHASE_THINKING: BmadPhaseThinkingConfig = {
+  analyze: 'ultrathink',
+  prd: 'ultrathink',
+  architecture: 'ultrathink',
+  epics: 'ultrathink',
+  stories: 'ultrathink',
+  dev: 'ultrathink',
+  review: 'ultrathink'
+};
+
+// Balanced - Sonnet with medium thinking across all BMAD phases
+export const BMAD_BALANCED_PHASE_MODELS: BmadPhaseModelConfig = {
+  analyze: 'sonnet',
+  prd: 'sonnet',
+  architecture: 'sonnet',
+  epics: 'sonnet',
+  stories: 'sonnet',
+  dev: 'sonnet',
+  review: 'sonnet'
+};
+
+export const BMAD_BALANCED_PHASE_THINKING: BmadPhaseThinkingConfig = {
+  analyze: 'medium',
+  prd: 'medium',
+  architecture: 'medium',
+  epics: 'medium',
+  stories: 'medium',
+  dev: 'medium',
+  review: 'medium'
+};
+
+// Quick Edits - Haiku with low thinking across all BMAD phases
+export const BMAD_QUICK_PHASE_MODELS: BmadPhaseModelConfig = {
+  analyze: 'haiku',
+  prd: 'haiku',
+  architecture: 'haiku',
+  epics: 'haiku',
+  stories: 'haiku',
+  dev: 'haiku',
+  review: 'haiku'
+};
+
+export const BMAD_QUICK_PHASE_THINKING: BmadPhaseThinkingConfig = {
+  analyze: 'low',
+  prd: 'low',
+  architecture: 'low',
+  epics: 'low',
+  stories: 'low',
+  dev: 'low',
+  review: 'low'
+};
+
+// Default BMAD phase configuration (matches Balanced profile)
+export const DEFAULT_BMAD_PHASE_MODELS: BmadPhaseModelConfig = BMAD_BALANCED_PHASE_MODELS;
+export const DEFAULT_BMAD_PHASE_THINKING: BmadPhaseThinkingConfig = BMAD_BALANCED_PHASE_THINKING;
+
+// Map profile ID to BMAD phase configs
+export const BMAD_PROFILE_PHASE_MODELS: Record<string, BmadPhaseModelConfig> = {
+  auto: BMAD_AUTO_PHASE_MODELS,
+  complex: BMAD_COMPLEX_PHASE_MODELS,
+  balanced: BMAD_BALANCED_PHASE_MODELS,
+  quick: BMAD_QUICK_PHASE_MODELS,
+};
+
+export const BMAD_PROFILE_PHASE_THINKING: Record<string, BmadPhaseThinkingConfig> = {
+  auto: BMAD_AUTO_PHASE_THINKING,
+  complex: BMAD_COMPLEX_PHASE_THINKING,
+  balanced: BMAD_BALANCED_PHASE_THINKING,
+  quick: BMAD_QUICK_PHASE_THINKING,
+};
 
 // ============================================
 // Feature Settings (Non-Pipeline Features)

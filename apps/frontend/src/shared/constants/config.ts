@@ -82,7 +82,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   graphitiMcpEnabled: true,
   graphitiMcpUrl: 'http://localhost:8000/mcp/',
   // Include CLAUDE.md instructions in agent context (enabled by default)
-  useClaudeMd: true
+  useClaudeMd: true,
+  // Default methodology (native Auto Claude pipeline)
+  methodology: 'native',
+  // Agent profile for model/thinking selection (uses optimized defaults)
+  selectedAgentProfile: 'auto'
+  // Note: customPhaseModels, customPhaseThinking, bmadPhaseModels, bmadPhaseThinking
+  // are undefined by default - the profile defaults are used unless customized
 };
 
 // ============================================

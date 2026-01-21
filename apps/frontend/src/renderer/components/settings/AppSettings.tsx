@@ -5,7 +5,6 @@ import {
   Save,
   Loader2,
   Palette,
-  Bot,
   FolderOpen,
   Key,
   Package,
@@ -67,7 +66,8 @@ interface AppSettingsDialogProps {
 }
 
 // App-level settings sections
-export type AppSection = 'appearance' | 'display' | 'language' | 'devtools' | 'agent' | 'paths' | 'integrations' | 'api-profiles' | 'updates' | 'notifications' | 'debug';
+// Note: 'agent' settings moved to project-level settings
+export type AppSection = 'appearance' | 'display' | 'language' | 'devtools' | 'paths' | 'integrations' | 'api-profiles' | 'updates' | 'notifications' | 'debug';
 
 interface NavItemConfig<T extends string> {
   id: T;
@@ -79,7 +79,6 @@ const appNavItemsConfig: NavItemConfig<AppSection>[] = [
   { id: 'display', icon: Monitor },
   { id: 'language', icon: Globe },
   { id: 'devtools', icon: Code },
-  { id: 'agent', icon: Bot },
   { id: 'paths', icon: FolderOpen },
   { id: 'integrations', icon: Key },
   { id: 'api-profiles', icon: Server },
@@ -188,8 +187,6 @@ export function AppSettingsDialog({ open, onOpenChange, initialSection, initialP
         return <LanguageSettings settings={settings} onSettingsChange={setSettings} />;
       case 'devtools':
         return <DevToolsSettings settings={settings} onSettingsChange={setSettings} />;
-      case 'agent':
-        return <GeneralSettings settings={settings} onSettingsChange={setSettings} section="agent" />;
       case 'paths':
         return <GeneralSettings settings={settings} onSettingsChange={setSettings} section="paths" />;
       case 'integrations':

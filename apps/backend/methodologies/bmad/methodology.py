@@ -41,6 +41,9 @@ from apps.backend.methodologies.protocols import (
 if TYPE_CHECKING:
     from apps.backend.task_logger import LogPhase
 
+# Import conversation loop for two-agent pattern
+from apps.backend.agents.bmad_conversation import run_bmad_conversation_loop
+
 logger = logging.getLogger(__name__)
 
 # Type variable for async return types
@@ -88,6 +91,25 @@ class BMADRunner:
 
     # Default model for BMAD agent sessions
     _DEFAULT_AGENT_MODEL = "claude-sonnet-4-20250514"
+
+    # Default thinking level budget (None = no extended thinking)
+    _DEFAULT_THINKING_BUDGET: int | None = None
+
+    # Model ID mapping (shorthand to full model ID)
+    MODEL_ID_MAP: dict[str, str] = {
+        "opus": "claude-opus-4-5-20251101",
+        "sonnet": "claude-sonnet-4-5-20250929",
+        "haiku": "claude-haiku-4-5-20251001",
+    }
+
+    # Thinking level to budget mapping
+    THINKING_BUDGET_MAP: dict[str, int | None] = {
+        "none": None,
+        "low": 1024,
+        "medium": 4096,
+        "high": 16384,
+        "ultrathink": 63999,
+    }
 
     # Phase configuration per complexity level (Story 6.8)
     # Maps ComplexityLevel to list of phase IDs that should be executed
@@ -176,6 +198,65 @@ class BMADRunner:
         self._complexity = None
         self._current_progress_callback = None
         self._output_dir = None
+
+    def _get_phase_config(self, phase_id: str) -> tuple[str, int | None]:
+        """Get model and thinking budget for a specific phase.
+
+        Reads phase-specific configuration from task metadata's bmadPhaseModels
+        and bmadPhaseThinking, falling back to defaults if not specified.
+
+        Args:
+            phase_id: The phase identifier (analyze, prd, architecture, etc.)
+
+        Returns:
+            Tuple of (model_id, thinking_budget) where:
+            - model_id: Full Claude model ID string
+            - thinking_budget: Extended thinking token budget or None
+        """
+        # Default values
+        model = self._DEFAULT_AGENT_MODEL
+        thinking_budget = self._DEFAULT_THINKING_BUDGET
+
+        if not self._task_config:
+            return model, thinking_budget
+
+        metadata = self._task_config.metadata
+
+        # Check for BMAD-specific phase configuration
+        bmad_phase_models = metadata.get("bmadPhaseModels")
+        bmad_phase_thinking = metadata.get("bmadPhaseThinking")
+
+        if bmad_phase_models and phase_id in bmad_phase_models:
+            model_shorthand = bmad_phase_models[phase_id]
+            model = self.MODEL_ID_MAP.get(model_shorthand, self._DEFAULT_AGENT_MODEL)
+            debug(
+                "bmad.methodology",
+                f"Phase {phase_id} using configured model",
+                model=model,
+            )
+
+        if bmad_phase_thinking and phase_id in bmad_phase_thinking:
+            thinking_level = bmad_phase_thinking[phase_id]
+            thinking_budget = self.THINKING_BUDGET_MAP.get(thinking_level)
+            debug(
+                "bmad.methodology",
+                f"Phase {phase_id} using configured thinking",
+                thinking_level=thinking_level,
+                thinking_budget=thinking_budget,
+            )
+
+        # Fall back to single model/thinking if no phase-specific config
+        if not bmad_phase_models:
+            model_shorthand = metadata.get("model")
+            if model_shorthand:
+                model = self.MODEL_ID_MAP.get(model_shorthand, self._DEFAULT_AGENT_MODEL)
+
+        if not bmad_phase_thinking:
+            thinking_level = metadata.get("thinkingLevel")
+            if thinking_level:
+                thinking_budget = self.THINKING_BUDGET_MAP.get(thinking_level)
+
+        return model, thinking_budget
 
     def _run_async(self, coro: Coroutine[Any, Any, T]) -> T:
         """Run an async coroutine from sync context.
@@ -459,12 +540,8 @@ class BMADRunner:
         self._invoke_progress_callback("Starting BMAD document-project workflow...", 10.0)
 
         try:
-            # Get model from task config or use default
-            model = (
-                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
-                if self._task_config
-                else self._DEFAULT_AGENT_MODEL
-            )
+            # Get phase-specific model and thinking configuration
+            model, thinking_budget = self._get_phase_config("analyze")
 
             # Create client for BMAD agent
             self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
@@ -473,45 +550,66 @@ class BMADRunner:
                 "Creating Claude Agent SDK client",
                 model=model,
                 agent_type="coder",
+                thinking_budget=thinking_budget,
             )
             client = create_client(
                 project_dir,
                 self._spec_dir,
                 model=model,
                 agent_type="coder",  # Use coder permissions for file operations
-                max_thinking_tokens=None,
+                max_thinking_tokens=thinking_budget,
             )
             debug_success("bmad.methodology", "Client created successfully")
 
-            # The prompt is the BMAD slash command
-            prompt = "/bmad:bmm:workflows:document-project"
+            # Load workflow instructions (instead of slash command)
+            task_description = ""
+            if self._task_config:
+                task_description = self._task_config.metadata.get("task_description", "")
+
+            self._invoke_progress_callback("Loading workflow instructions...", 25.0)
+
+            try:
+                prompt = self._load_workflow_prompt(
+                    "bmm:workflows:document-project",
+                    task_description=task_description,
+                )
+            except FileNotFoundError as e:
+                debug_error("bmad.methodology", f"Workflow not found: {e}")
+                return PhaseResult(
+                    success=False,
+                    phase_id="analyze",
+                    error=f"BMAD workflow not found: {e}",
+                )
 
             debug(
                 "bmad.methodology",
-                "Invoking BMAD workflow via slash command",
-                prompt=prompt,
+                "Loaded BMAD workflow instructions",
+                prompt_length=len(prompt),
             )
 
-            # Run agent session
+            # Run two-agent conversation loop
             self._invoke_progress_callback("Running document-project workflow...", 30.0)
 
             async def _run_analyze():
-                debug("bmad.methodology", "Starting agent session...")
-                async with client:
-                    status, response = await run_agent_session(
-                        client,
-                        prompt,
-                        self._spec_dir,
-                        verbose=False,
-                        phase=LogPhase.PLANNING,
-                    )
-                    debug(
-                        "bmad.methodology",
-                        "Agent session completed",
-                        status=status,
-                        response_length=len(response) if response else 0,
-                    )
-                    return status, response
+                debug("bmad.methodology", "Starting two-agent conversation loop...")
+                status, response = await run_bmad_conversation_loop(
+                    project_dir=project_dir,
+                    spec_dir=self._spec_dir,
+                    phase="analyze",
+                    workflow_prompt=prompt,
+                    task_description=task_description,
+                    project_context="",  # Could add project context here
+                    model=model,
+                    max_turns=20,
+                    progress_callback=self._invoke_progress_callback,
+                )
+                debug(
+                    "bmad.methodology",
+                    "Conversation loop completed",
+                    status=status,
+                    response_length=len(response) if response else 0,
+                )
+                return status, response
 
             status, response = self._run_async(_run_analyze())
 
@@ -581,12 +679,8 @@ class BMADRunner:
         self._invoke_progress_callback("Starting BMAD create-prd workflow...", 10.0)
 
         try:
-            # Get model from task config or use default
-            model = (
-                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
-                if self._task_config
-                else self._DEFAULT_AGENT_MODEL
-            )
+            # Get phase-specific model and thinking configuration
+            model, thinking_budget = self._get_phase_config("prd")
 
             # Create client for BMAD agent
             self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
@@ -595,53 +689,67 @@ class BMADRunner:
                 "Creating Claude Agent SDK client",
                 model=model,
                 agent_type="coder",
+                thinking_budget=thinking_budget,
             )
             client = create_client(
                 project_dir,
                 self._spec_dir,
                 model=model,
                 agent_type="coder",
-                max_thinking_tokens=None,
+                max_thinking_tokens=thinking_budget,
             )
             debug_success("bmad.methodology", "Client created successfully")
 
-            # Build the prompt with task description context
+            # Load workflow instructions (instead of slash command)
             task_description = ""
             if self._task_config:
                 task_description = self._task_config.metadata.get("task_description", "")
 
-            # The prompt is the BMAD slash command with optional context
-            prompt = "/bmad:bmm:workflows:create-prd"
-            if task_description:
-                prompt += f"\n\nTask: {task_description}"
+            self._invoke_progress_callback("Loading workflow instructions...", 25.0)
+
+            try:
+                prompt = self._load_workflow_prompt(
+                    "bmm:workflows:2-plan-workflows:prd",
+                    task_description=task_description,
+                )
+            except FileNotFoundError as e:
+                debug_error("bmad.methodology", f"Workflow not found: {e}")
+                return PhaseResult(
+                    success=False,
+                    phase_id="prd",
+                    error=f"BMAD workflow not found: {e}",
+                )
 
             debug(
                 "bmad.methodology",
-                "Invoking BMAD workflow via slash command",
-                prompt=prompt,
+                "Loaded BMAD workflow instructions",
+                prompt_length=len(prompt),
                 task_description=task_description or "(none)",
             )
 
-            # Run agent session
+            # Run two-agent conversation loop
             self._invoke_progress_callback("Running create-prd workflow...", 30.0)
 
             async def _run_prd():
-                debug("bmad.methodology", "Starting agent session...")
-                async with client:
-                    status, response = await run_agent_session(
-                        client,
-                        prompt,
-                        self._spec_dir,
-                        verbose=False,
-                        phase=LogPhase.PLANNING,
-                    )
-                    debug(
-                        "bmad.methodology",
-                        "Agent session completed",
-                        status=status,
-                        response_length=len(response) if response else 0,
-                    )
-                    return status, response
+                debug("bmad.methodology", "Starting two-agent conversation loop...")
+                status, response = await run_bmad_conversation_loop(
+                    project_dir=project_dir,
+                    spec_dir=self._spec_dir,
+                    phase="prd",
+                    workflow_prompt=prompt,
+                    task_description=task_description,
+                    project_context="",
+                    model=model,
+                    max_turns=30,  # PRD has more steps, allow more turns
+                    progress_callback=self._invoke_progress_callback,
+                )
+                debug(
+                    "bmad.methodology",
+                    "Conversation loop completed",
+                    status=status,
+                    response_length=len(response) if response else 0,
+                )
+                return status, response
 
             status, response = self._run_async(_run_prd())
 
@@ -707,11 +815,8 @@ class BMADRunner:
         self._invoke_progress_callback("Starting BMAD create-architecture workflow...", 10.0)
 
         try:
-            model = (
-                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
-                if self._task_config
-                else self._DEFAULT_AGENT_MODEL
-            )
+            # Get phase-specific model and thinking configuration
+            model, thinking_budget = self._get_phase_config("architecture")
 
             self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
             debug(
@@ -719,43 +824,66 @@ class BMADRunner:
                 "Creating Claude Agent SDK client",
                 model=model,
                 agent_type="coder",
+                thinking_budget=thinking_budget,
             )
             client = create_client(
                 project_dir,
                 self._spec_dir,
                 model=model,
                 agent_type="coder",
-                max_thinking_tokens=None,
+                max_thinking_tokens=thinking_budget,
             )
             debug_success("bmad.methodology", "Client created successfully")
 
-            prompt = "/bmad:bmm:workflows:create-architecture"
+            # Load workflow instructions (instead of slash command)
+            task_description = ""
+            if self._task_config:
+                task_description = self._task_config.metadata.get("task_description", "")
+
+            self._invoke_progress_callback("Loading workflow instructions...", 25.0)
+
+            try:
+                prompt = self._load_workflow_prompt(
+                    "bmm:workflows:3-solutioning:create-architecture",
+                    task_description=task_description,
+                )
+            except FileNotFoundError as e:
+                debug_error("bmad.methodology", f"Workflow not found: {e}")
+                return PhaseResult(
+                    success=False,
+                    phase_id="architecture",
+                    error=f"BMAD workflow not found: {e}",
+                )
 
             debug(
                 "bmad.methodology",
-                "Invoking BMAD workflow via slash command",
-                prompt=prompt,
+                "Loaded BMAD workflow instructions",
+                prompt_length=len(prompt),
             )
 
+            # Run two-agent conversation loop
             self._invoke_progress_callback("Running create-architecture workflow...", 30.0)
 
             async def _run_architecture():
-                debug("bmad.methodology", "Starting agent session...")
-                async with client:
-                    status, response = await run_agent_session(
-                        client,
-                        prompt,
-                        self._spec_dir,
-                        verbose=False,
-                        phase=LogPhase.PLANNING,
-                    )
-                    debug(
-                        "bmad.methodology",
-                        "Agent session completed",
-                        status=status,
-                        response_length=len(response) if response else 0,
-                    )
-                    return status, response
+                debug("bmad.methodology", "Starting two-agent conversation loop...")
+                status, response = await run_bmad_conversation_loop(
+                    project_dir=project_dir,
+                    spec_dir=self._spec_dir,
+                    phase="architecture",
+                    workflow_prompt=prompt,
+                    task_description=task_description,
+                    project_context="",
+                    model=model,
+                    max_turns=25,
+                    progress_callback=self._invoke_progress_callback,
+                )
+                debug(
+                    "bmad.methodology",
+                    "Conversation loop completed",
+                    status=status,
+                    response_length=len(response) if response else 0,
+                )
+                return status, response
 
             status, response = self._run_async(_run_architecture())
 
@@ -820,11 +948,8 @@ class BMADRunner:
         self._invoke_progress_callback("Starting BMAD create-epics-and-stories workflow...", 10.0)
 
         try:
-            model = (
-                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
-                if self._task_config
-                else self._DEFAULT_AGENT_MODEL
-            )
+            # Get phase-specific model and thinking configuration
+            model, thinking_budget = self._get_phase_config("epics")
 
             self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
             debug(
@@ -832,43 +957,66 @@ class BMADRunner:
                 "Creating Claude Agent SDK client",
                 model=model,
                 agent_type="coder",
+                thinking_budget=thinking_budget,
             )
             client = create_client(
                 project_dir,
                 self._spec_dir,
                 model=model,
                 agent_type="coder",
-                max_thinking_tokens=None,
+                max_thinking_tokens=thinking_budget,
             )
             debug_success("bmad.methodology", "Client created successfully")
 
-            prompt = "/bmad:bmm:workflows:create-epics-and-stories"
+            # Load workflow instructions (instead of slash command)
+            task_description = ""
+            if self._task_config:
+                task_description = self._task_config.metadata.get("task_description", "")
+
+            self._invoke_progress_callback("Loading workflow instructions...", 25.0)
+
+            try:
+                prompt = self._load_workflow_prompt(
+                    "bmm:workflows:3-solutioning:create-epics-and-stories",
+                    task_description=task_description,
+                )
+            except FileNotFoundError as e:
+                debug_error("bmad.methodology", f"Workflow not found: {e}")
+                return PhaseResult(
+                    success=False,
+                    phase_id="epics",
+                    error=f"BMAD workflow not found: {e}",
+                )
 
             debug(
                 "bmad.methodology",
-                "Invoking BMAD workflow via slash command",
-                prompt=prompt,
+                "Loaded BMAD workflow instructions",
+                prompt_length=len(prompt),
             )
 
+            # Run two-agent conversation loop
             self._invoke_progress_callback("Running create-epics-and-stories workflow...", 30.0)
 
             async def _run_epics():
-                debug("bmad.methodology", "Starting agent session...")
-                async with client:
-                    status, response = await run_agent_session(
-                        client,
-                        prompt,
-                        self._spec_dir,
-                        verbose=False,
-                        phase=LogPhase.PLANNING,
-                    )
-                    debug(
-                        "bmad.methodology",
-                        "Agent session completed",
-                        status=status,
-                        response_length=len(response) if response else 0,
-                    )
-                    return status, response
+                debug("bmad.methodology", "Starting two-agent conversation loop...")
+                status, response = await run_bmad_conversation_loop(
+                    project_dir=project_dir,
+                    spec_dir=self._spec_dir,
+                    phase="epics",
+                    workflow_prompt=prompt,
+                    task_description=task_description,
+                    project_context="",
+                    model=model,
+                    max_turns=25,
+                    progress_callback=self._invoke_progress_callback,
+                )
+                debug(
+                    "bmad.methodology",
+                    "Conversation loop completed",
+                    status=status,
+                    response_length=len(response) if response else 0,
+                )
+                return status, response
 
             status, response = self._run_async(_run_epics())
 
@@ -933,11 +1081,8 @@ class BMADRunner:
         self._invoke_progress_callback("Starting BMAD create-story workflow...", 10.0)
 
         try:
-            model = (
-                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
-                if self._task_config
-                else self._DEFAULT_AGENT_MODEL
-            )
+            # Get phase-specific model and thinking configuration
+            model, thinking_budget = self._get_phase_config("stories")
 
             self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
             debug(
@@ -945,43 +1090,66 @@ class BMADRunner:
                 "Creating Claude Agent SDK client",
                 model=model,
                 agent_type="coder",
+                thinking_budget=thinking_budget,
             )
             client = create_client(
                 project_dir,
                 self._spec_dir,
                 model=model,
                 agent_type="coder",
-                max_thinking_tokens=None,
+                max_thinking_tokens=thinking_budget,
             )
             debug_success("bmad.methodology", "Client created successfully")
 
-            prompt = "/bmad:bmm:workflows:create-story"
+            # Load workflow instructions (instead of slash command)
+            task_description = ""
+            if self._task_config:
+                task_description = self._task_config.metadata.get("task_description", "")
+
+            self._invoke_progress_callback("Loading workflow instructions...", 25.0)
+
+            try:
+                prompt = self._load_workflow_prompt(
+                    "bmm:workflows:4-implementation:create-story",
+                    task_description=task_description,
+                )
+            except FileNotFoundError as e:
+                debug_error("bmad.methodology", f"Workflow not found: {e}")
+                return PhaseResult(
+                    success=False,
+                    phase_id="stories",
+                    error=f"BMAD workflow not found: {e}",
+                )
 
             debug(
                 "bmad.methodology",
-                "Invoking BMAD workflow via slash command",
-                prompt=prompt,
+                "Loaded BMAD workflow instructions",
+                prompt_length=len(prompt),
             )
 
+            # Run two-agent conversation loop
             self._invoke_progress_callback("Running create-story workflow...", 30.0)
 
             async def _run_stories():
-                debug("bmad.methodology", "Starting agent session...")
-                async with client:
-                    status, response = await run_agent_session(
-                        client,
-                        prompt,
-                        self._spec_dir,
-                        verbose=False,
-                        phase=LogPhase.PLANNING,
-                    )
-                    debug(
-                        "bmad.methodology",
-                        "Agent session completed",
-                        status=status,
-                        response_length=len(response) if response else 0,
-                    )
-                    return status, response
+                debug("bmad.methodology", "Starting two-agent conversation loop...")
+                status, response = await run_bmad_conversation_loop(
+                    project_dir=project_dir,
+                    spec_dir=self._spec_dir,
+                    phase="stories",
+                    workflow_prompt=prompt,
+                    task_description=task_description,
+                    project_context="",
+                    model=model,
+                    max_turns=20,
+                    progress_callback=self._invoke_progress_callback,
+                )
+                debug(
+                    "bmad.methodology",
+                    "Conversation loop completed",
+                    status=status,
+                    response_length=len(response) if response else 0,
+                )
+                return status, response
 
             status, response = self._run_async(_run_stories())
 
@@ -1046,11 +1214,8 @@ class BMADRunner:
         self._invoke_progress_callback("Starting BMAD dev-story workflow...", 10.0)
 
         try:
-            model = (
-                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
-                if self._task_config
-                else self._DEFAULT_AGENT_MODEL
-            )
+            # Get phase-specific model and thinking configuration
+            model, thinking_budget = self._get_phase_config("dev")
 
             self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
             debug(
@@ -1058,43 +1223,66 @@ class BMADRunner:
                 "Creating Claude Agent SDK client",
                 model=model,
                 agent_type="coder",
+                thinking_budget=thinking_budget,
             )
             client = create_client(
                 project_dir,
                 self._spec_dir,
                 model=model,
                 agent_type="coder",
-                max_thinking_tokens=None,
+                max_thinking_tokens=thinking_budget,
             )
             debug_success("bmad.methodology", "Client created successfully")
 
-            prompt = "/bmad:bmm:workflows:dev-story"
+            # Load workflow instructions (instead of slash command)
+            task_description = ""
+            if self._task_config:
+                task_description = self._task_config.metadata.get("task_description", "")
+
+            self._invoke_progress_callback("Loading workflow instructions...", 25.0)
+
+            try:
+                prompt = self._load_workflow_prompt(
+                    "bmm:workflows:4-implementation:dev-story",
+                    task_description=task_description,
+                )
+            except FileNotFoundError as e:
+                debug_error("bmad.methodology", f"Workflow not found: {e}")
+                return PhaseResult(
+                    success=False,
+                    phase_id="dev",
+                    error=f"BMAD workflow not found: {e}",
+                )
 
             debug(
                 "bmad.methodology",
-                "Invoking BMAD workflow via slash command",
-                prompt=prompt,
+                "Loaded BMAD workflow instructions",
+                prompt_length=len(prompt),
             )
 
+            # Run two-agent conversation loop
             self._invoke_progress_callback("Running dev-story workflow...", 30.0)
 
             async def _run_dev():
-                debug("bmad.methodology", "Starting agent session...")
-                async with client:
-                    status, response = await run_agent_session(
-                        client,
-                        prompt,
-                        self._spec_dir,
-                        verbose=False,
-                        phase=LogPhase.CODING,
-                    )
-                    debug(
-                        "bmad.methodology",
-                        "Agent session completed",
-                        status=status,
-                        response_length=len(response) if response else 0,
-                    )
-                    return status, response
+                debug("bmad.methodology", "Starting two-agent conversation loop...")
+                status, response = await run_bmad_conversation_loop(
+                    project_dir=project_dir,
+                    spec_dir=self._spec_dir,
+                    phase="dev",
+                    workflow_prompt=prompt,
+                    task_description=task_description,
+                    project_context="",
+                    model=model,
+                    max_turns=30,  # Dev phase may need more turns
+                    progress_callback=self._invoke_progress_callback,
+                )
+                debug(
+                    "bmad.methodology",
+                    "Conversation loop completed",
+                    status=status,
+                    response_length=len(response) if response else 0,
+                )
+                return status, response
 
             status, response = self._run_async(_run_dev())
 
@@ -1159,11 +1347,8 @@ class BMADRunner:
         self._invoke_progress_callback("Starting BMAD code-review workflow...", 10.0)
 
         try:
-            model = (
-                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
-                if self._task_config
-                else self._DEFAULT_AGENT_MODEL
-            )
+            # Get phase-specific model and thinking configuration
+            model, thinking_budget = self._get_phase_config("review")
 
             self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
             debug(
@@ -1171,43 +1356,66 @@ class BMADRunner:
                 "Creating Claude Agent SDK client",
                 model=model,
                 agent_type="qa_reviewer",
+                thinking_budget=thinking_budget,
             )
             client = create_client(
                 project_dir,
                 self._spec_dir,
                 model=model,
                 agent_type="qa_reviewer",  # Use QA reviewer permissions for code review
-                max_thinking_tokens=None,
+                max_thinking_tokens=thinking_budget,
             )
             debug_success("bmad.methodology", "Client created successfully")
 
-            prompt = "/bmad:bmm:workflows:code-review"
+            # Load workflow instructions (instead of slash command)
+            task_description = ""
+            if self._task_config:
+                task_description = self._task_config.metadata.get("task_description", "")
+
+            self._invoke_progress_callback("Loading workflow instructions...", 25.0)
+
+            try:
+                prompt = self._load_workflow_prompt(
+                    "bmm:workflows:4-implementation:code-review",
+                    task_description=task_description,
+                )
+            except FileNotFoundError as e:
+                debug_error("bmad.methodology", f"Workflow not found: {e}")
+                return PhaseResult(
+                    success=False,
+                    phase_id="review",
+                    error=f"BMAD workflow not found: {e}",
+                )
 
             debug(
                 "bmad.methodology",
-                "Invoking BMAD workflow via slash command",
-                prompt=prompt,
+                "Loaded BMAD workflow instructions",
+                prompt_length=len(prompt),
             )
 
+            # Run two-agent conversation loop
             self._invoke_progress_callback("Running code-review workflow...", 30.0)
 
             async def _run_review():
-                debug("bmad.methodology", "Starting agent session...")
-                async with client:
-                    status, response = await run_agent_session(
-                        client,
-                        prompt,
-                        self._spec_dir,
-                        verbose=False,
-                        phase=LogPhase.VALIDATION,
-                    )
-                    debug(
-                        "bmad.methodology",
-                        "Agent session completed",
-                        status=status,
-                        response_length=len(response) if response else 0,
-                    )
-                    return status, response
+                debug("bmad.methodology", "Starting two-agent conversation loop...")
+                status, response = await run_bmad_conversation_loop(
+                    project_dir=project_dir,
+                    spec_dir=self._spec_dir,
+                    phase="review",
+                    workflow_prompt=prompt,
+                    task_description=task_description,
+                    project_context="",
+                    model=model,
+                    max_turns=20,
+                    progress_callback=self._invoke_progress_callback,
+                )
+                debug(
+                    "bmad.methodology",
+                    "Conversation loop completed",
+                    status=status,
+                    response_length=len(response) if response else 0,
+                )
+                return status, response
 
             status, response = self._run_async(_run_review())
 
@@ -1637,6 +1845,174 @@ class BMADRunner:
                 logger.debug(f"Removed BMAD skills symlink: {target_bmad}")
             except OSError as e:
                 logger.warning(f"Could not remove BMAD skills symlink: {e}")
+
+    def _load_workflow_prompt(
+        self,
+        workflow_path: str,
+        task_description: str | None = None,
+    ) -> str:
+        """Load BMAD workflow instructions and return the full prompt.
+
+        Resolves a workflow path to the actual instructions.md file, loads it,
+        and optionally substitutes config variables.
+
+        Supports two formats:
+        1. Colon-separated: 'bmm:workflows:document-project' or 'bmm:workflows:2-plan-workflows:prd'
+        2. Slash-separated: 'bmm/workflows/document-project'
+
+        Args:
+            workflow_path: Path to workflow (colon or slash separated from _bmad root)
+            task_description: Optional task description to include in the prompt
+
+        Returns:
+            Full prompt text with workflow instructions
+
+        Raises:
+            FileNotFoundError: If workflow instructions not found
+        """
+        import re
+
+        debug(
+            "bmad.methodology",
+            "Loading workflow prompt",
+            workflow_path=workflow_path,
+        )
+
+        # Resolve paths relative to project's _bmad directory
+        project_dir = Path(self._project_dir)
+        bmad_root = project_dir / "_bmad"
+
+        if not bmad_root.exists():
+            raise FileNotFoundError(
+                f"BMAD skills directory not found at {bmad_root}. "
+                "Ensure _init_skills() was called successfully."
+            )
+
+        # Normalize path: convert colons to slashes for path resolution
+        normalized_path = workflow_path.replace(":", "/")
+
+        # Build workflow directory path
+        workflow_dir = bmad_root / normalized_path
+
+        if not workflow_dir.exists():
+            raise FileNotFoundError(
+                f"Workflow not found at {workflow_dir}. "
+                f"Check that the workflow '{workflow_path}' is installed."
+            )
+
+        # Load instructions (check for instructions.md, workflow.md, or instructions.xml)
+        # BMAD workflows use various file formats - support all of them
+        instructions_path = None
+        for filename in ["instructions.md", "workflow.md", "instructions.xml"]:
+            candidate = workflow_dir / filename
+            if candidate.exists():
+                instructions_path = candidate
+                break
+
+        if instructions_path is None:
+            raise FileNotFoundError(
+                f"Workflow instructions not found at {workflow_dir}. "
+                "Each workflow must have instructions.md, workflow.md, or instructions.xml file."
+            )
+
+        instructions = instructions_path.read_text(encoding="utf-8")
+
+        debug(
+            "bmad.methodology",
+            "Loaded workflow instructions",
+            path=str(instructions_path),
+            length=len(instructions),
+        )
+
+        # Load workflow.yaml for config variable substitution
+        workflow_yaml_path = workflow_dir / "workflow.yaml"
+        workflow_config = {}
+        if workflow_yaml_path.exists():
+            try:
+                import yaml
+                workflow_config = yaml.safe_load(workflow_yaml_path.read_text(encoding="utf-8")) or {}
+                debug(
+                    "bmad.methodology",
+                    "Loaded workflow config",
+                    keys=list(workflow_config.keys()),
+                )
+            except Exception as e:
+                logger.warning(f"Could not load workflow.yaml: {e}")
+
+        # Extract module name from path for config loading (first component)
+        path_parts = normalized_path.split("/")
+        module = path_parts[0] if path_parts else "bmm"
+
+        # Load module config.yaml for additional variables
+        module_config_path = bmad_root / module / "config.yaml"
+        module_config = {}
+        if module_config_path.exists():
+            try:
+                import yaml
+                module_config = yaml.safe_load(module_config_path.read_text(encoding="utf-8")) or {}
+                debug(
+                    "bmad.methodology",
+                    "Loaded module config",
+                    path=str(module_config_path),
+                    keys=list(module_config.keys()),
+                )
+            except Exception as e:
+                logger.warning(f"Could not load module config.yaml: {e}")
+
+        # Build substitution variables
+        variables = {
+            "project-root": str(project_dir),
+            "project_root": str(project_dir),
+            "installed_path": str(workflow_dir),
+            "spec_dir": str(self._spec_dir) if self._spec_dir else "",
+            "bmad_output": str(self._output_dir) if self._output_dir else "",
+            **module_config,
+            **workflow_config,
+        }
+
+        # Add task description if provided
+        if task_description:
+            variables["task_description"] = task_description
+
+        # Substitute {variable} patterns in instructions
+        def replace_var(match):
+            var_name = match.group(1)
+            # Handle nested config references like {config_source}:key
+            if ":" in var_name:
+                # Skip complex config references for now
+                return match.group(0)
+            return str(variables.get(var_name, match.group(0)))
+
+        instructions = re.sub(r"\{([^}]+)\}", replace_var, instructions)
+
+        # Build final prompt with context
+        prompt_parts = []
+
+        # Add task context if provided
+        if task_description:
+            prompt_parts.append(f"## Task Description\n\n{task_description}\n\n")
+
+        # Add output directory context
+        if self._output_dir:
+            prompt_parts.append(
+                f"## Output Directory\n\n"
+                f"Write all output artifacts to: `{self._output_dir}`\n\n"
+            )
+
+        # Add the workflow instructions
+        prompt_parts.append("## Workflow Instructions\n\n")
+        prompt_parts.append(instructions)
+
+        full_prompt = "".join(prompt_parts)
+
+        debug_success(
+            "bmad.methodology",
+            "Workflow prompt loaded",
+            prompt_length=len(full_prompt),
+            preview=full_prompt[:200] + "..." if len(full_prompt) > 200 else full_prompt,
+        )
+
+        return full_prompt
 
     def _find_phase(self, phase_id: str) -> Phase | None:
         """Find a phase by its ID.

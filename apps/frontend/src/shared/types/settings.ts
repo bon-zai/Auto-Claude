@@ -180,6 +180,37 @@ export interface PhaseThinkingConfig {
   qa: ThinkingLevel;
 }
 
+// ============================================
+// BMAD Methodology Phase Configuration
+// ============================================
+
+// Phase-based model configuration for BMAD methodology
+// Maps to BMAD's 7 phases: analyze, prd, architecture, epics, stories, dev, review
+export interface BmadPhaseModelConfig {
+  analyze: ModelTypeShort;      // Project analysis and documentation
+  prd: ModelTypeShort;          // PRD creation
+  architecture: ModelTypeShort; // Architecture design
+  epics: ModelTypeShort;        // Epic and story creation
+  stories: ModelTypeShort;      // Story preparation
+  dev: ModelTypeShort;          // Development/implementation
+  review: ModelTypeShort;       // Code review
+}
+
+// Thinking level configuration per BMAD phase
+export interface BmadPhaseThinkingConfig {
+  analyze: ThinkingLevel;
+  prd: ThinkingLevel;
+  architecture: ThinkingLevel;
+  epics: ThinkingLevel;
+  stories: ThinkingLevel;
+  dev: ThinkingLevel;
+  review: ThinkingLevel;
+}
+
+// Union type for methodology-specific phase configs
+export type MethodologyPhaseModels = PhaseModelConfig | BmadPhaseModelConfig;
+export type MethodologyPhaseThinking = PhaseThinkingConfig | BmadPhaseThinkingConfig;
+
 // Feature-specific model configuration (for non-pipeline features)
 export interface FeatureModelConfig {
   insights: ModelTypeShort;    // Insights chat feature

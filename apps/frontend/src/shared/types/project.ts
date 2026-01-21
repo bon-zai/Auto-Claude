@@ -2,6 +2,13 @@
  * Project-related types
  */
 
+import type {
+  PhaseModelConfig,
+  PhaseThinkingConfig,
+  BmadPhaseModelConfig,
+  BmadPhaseThinkingConfig,
+} from './settings';
+
 export interface Project {
   id: string;
   name: string;
@@ -28,6 +35,25 @@ export interface ProjectSettings {
   useClaudeMd?: boolean;
   /** Default methodology name for this project (default: 'native') */
   methodology?: string;
+
+  // ============================================
+  // Agent Profile Settings (Project-Level)
+  // ============================================
+
+  /** Selected agent profile for this project (e.g., 'auto', 'complex', 'balanced', 'quick') */
+  selectedAgentProfile?: string;
+
+  // Native methodology phase configuration (spec, planning, coding, qa)
+  /** Custom model override per native phase */
+  customPhaseModels?: PhaseModelConfig;
+  /** Custom thinking level override per native phase */
+  customPhaseThinking?: PhaseThinkingConfig;
+
+  // BMAD methodology phase configuration (analyze, prd, architecture, epics, stories, dev, review)
+  /** Custom model override per BMAD phase */
+  bmadPhaseModels?: BmadPhaseModelConfig;
+  /** Custom thinking level override per BMAD phase */
+  bmadPhaseThinking?: BmadPhaseThinkingConfig;
 }
 
 export interface NotificationSettings {

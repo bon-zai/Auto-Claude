@@ -50,25 +50,51 @@ export interface TaskExecutionOptions {
   useWorktree?: boolean; // If false, use --direct mode (no worktree isolation)
 }
 
+type ModelType = 'haiku' | 'sonnet' | 'opus';
+type ThinkingLevelType = 'none' | 'low' | 'medium' | 'high' | 'ultrathink';
+
 export interface SpecCreationMetadata {
   requireReviewBeforeCoding?: boolean;
   // Auto profile - phase-based model and thinking configuration
   isAutoProfile?: boolean;
+
+  // Native methodology phase configuration (spec, planning, coding, qa)
   phaseModels?: {
-    spec: 'haiku' | 'sonnet' | 'opus';
-    planning: 'haiku' | 'sonnet' | 'opus';
-    coding: 'haiku' | 'sonnet' | 'opus';
-    qa: 'haiku' | 'sonnet' | 'opus';
+    spec: ModelType;
+    planning: ModelType;
+    coding: ModelType;
+    qa: ModelType;
   };
   phaseThinking?: {
-    spec: 'none' | 'low' | 'medium' | 'high' | 'ultrathink';
-    planning: 'none' | 'low' | 'medium' | 'high' | 'ultrathink';
-    coding: 'none' | 'low' | 'medium' | 'high' | 'ultrathink';
-    qa: 'none' | 'low' | 'medium' | 'high' | 'ultrathink';
+    spec: ThinkingLevelType;
+    planning: ThinkingLevelType;
+    coding: ThinkingLevelType;
+    qa: ThinkingLevelType;
   };
+
+  // BMAD methodology phase configuration (analyze, prd, architecture, epics, stories, dev, review)
+  bmadPhaseModels?: {
+    analyze: ModelType;
+    prd: ModelType;
+    architecture: ModelType;
+    epics: ModelType;
+    stories: ModelType;
+    dev: ModelType;
+    review: ModelType;
+  };
+  bmadPhaseThinking?: {
+    analyze: ThinkingLevelType;
+    prd: ThinkingLevelType;
+    architecture: ThinkingLevelType;
+    epics: ThinkingLevelType;
+    stories: ThinkingLevelType;
+    dev: ThinkingLevelType;
+    review: ThinkingLevelType;
+  };
+
   // Non-auto profile - single model and thinking level
-  model?: 'haiku' | 'sonnet' | 'opus';
-  thinkingLevel?: 'none' | 'low' | 'medium' | 'high' | 'ultrathink';
+  model?: ModelType;
+  thinkingLevel?: ThinkingLevelType;
   // Workspace mode - whether to use worktree isolation
   useWorktree?: boolean; // If false, use --direct mode (no worktree isolation)
   // Methodology plugin name (e.g., 'native', 'bmad')
