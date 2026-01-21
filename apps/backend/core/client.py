@@ -12,6 +12,7 @@ The client factory now uses AGENT_CONFIGS from agents/tools_pkg/models.py as the
 single source of truth for phase-aware tool and MCP server configuration.
 """
 
+import atexit
 import copy
 import json
 import logging
@@ -448,6 +449,27 @@ def load_claude_md(project_dir: Path) -> str | None:
 # See: https://github.com/AndyMik90/Auto-Claude/issues/384
 _SYSTEM_PROMPT_SIZE_THRESHOLD = 90 * 1024  # 90KB
 
+# Track temp files for cleanup on exit
+_system_prompt_temp_files: list[str] = []
+
+
+def _cleanup_temp_files() -> None:
+    """Clean up temporary files created for system prompts.
+
+    This is called automatically on process exit via atexit.
+    """
+    for temp_file_path in _system_prompt_temp_files:
+        try:
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                logger.debug(f"Cleaned up temp file: {temp_file_path}")
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp file {temp_file_path}: {e}")
+
+
+# Register cleanup handler to run on process exit
+atexit.register(_cleanup_temp_files)
+
 
 def _prepare_system_prompt(
     project_dir: Path,
@@ -494,23 +516,28 @@ def _prepare_system_prompt(
     prompt_size = len(base_prompt.encode("utf-8"))
     if prompt_size > _SYSTEM_PROMPT_SIZE_THRESHOLD:
         # Write to temp file and use @filepath syntax
-        # ruff: noqa: SIM115
-        temp_file = tempfile.NamedTemporaryFile(
+        # Use delete=False to keep the file for the CLI subprocess to read
+        # File is tracked and cleaned up on exit via atexit handler
+        temp_file_path: str
+        with tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".txt",
             delete=False,
             encoding="utf-8",
-        )
-        temp_file.write(base_prompt)
-        temp_file.close()
+        ) as temp_file:
+            temp_file.write(base_prompt)
+            temp_file_path = temp_file.name
+
+        # Register for cleanup on exit
+        _system_prompt_temp_files.append(temp_file_path)
 
         logger.info(
             f"System prompt size ({prompt_size:,} bytes) exceeds threshold "
-            f"({_SYSTEM_PROMPT_SIZE_THRESHOLD:,} bytes). Using temp file: {temp_file.name}"
+            f"({_SYSTEM_PROMPT_SIZE_THRESHOLD:,} bytes). Using temp file: {temp_file_path}"
         )
         print(f"   - CLAUDE.md: large prompt ({prompt_size:,} bytes), using temp file")
 
-        return f"@{temp_file.name}", temp_file.name
+        return f"@{temp_file_path}", temp_file_path
 
     # Prompt is small enough to pass directly
     claude_md_info = ""
