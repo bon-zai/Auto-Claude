@@ -20,6 +20,7 @@ import type { ClaudeCodeVersionInfo, ClaudeInstallationList, ClaudeInstallationI
 import { getToolInfo, configureTools, sortNvmVersionDirs, getClaudeDetectionPaths, type ExecFileAsyncOptionsWithVerbatim } from '../cli-tool-manager';
 import { readSettingsFile, writeSettingsFile } from '../settings-utils';
 import { isSecurePath } from '../utils/windows-paths';
+import { isWindows, isMacOS, isLinux } from '../platform';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import { isValidConfigDir } from '../utils/config-path-validator';
 import semver from 'semver';
@@ -39,10 +40,8 @@ const VERSION_LIST_CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour for version lis
  */
 async function validateClaudeCliAsync(cliPath: string): Promise<[boolean, string | null]> {
   try {
-    const isWindows = process.platform === 'win32';
-
     // Security validation: reject paths with shell metacharacters or directory traversal
-    if (isWindows && !isSecurePath(cliPath)) {
+    if (isWindows() && !isSecurePath(cliPath)) {
       throw new Error(`Claude CLI path failed security validation: ${cliPath}`);
     }
 
@@ -58,7 +57,7 @@ async function validateClaudeCliAsync(cliPath: string): Promise<[boolean, string
     // /d = disable AutoRun registry commands
     // /s = strip first and last quotes, preserving inner quotes
     // /c = run command then terminate
-    if (isWindows && /\.(cmd|bat)$/i.test(cliPath)) {
+    if (isWindows() && /\.(cmd|bat)$/i.test(cliPath)) {
       // Get cmd.exe path from environment or use default
       const cmdExe = process.env.ComSpec
         || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
@@ -106,7 +105,6 @@ async function scanClaudeInstallations(activePath: string | null): Promise<Claud
   const installations: ClaudeInstallationInfo[] = [];
   const seenPaths = new Set<string>();
   const homeDir = os.homedir();
-  const isWindows = process.platform === 'win32';
 
   // Get detection paths from cli-tool-manager (single source of truth)
   const detectionPaths = getClaudeDetectionPaths(homeDir);
@@ -146,7 +144,7 @@ async function scanClaudeInstallations(activePath: string | null): Promise<Claud
 
   // 2. Check system PATH via which/where
   try {
-    if (isWindows) {
+    if (isWindows()) {
       const result = await execFileAsync('where', ['claude'], { timeout: 5000 });
       const paths = result.stdout.trim().split('\n').filter(p => p.trim());
       for (const p of paths) {
@@ -164,14 +162,14 @@ async function scanClaudeInstallations(activePath: string | null): Promise<Claud
   }
 
   // 3. Homebrew paths (macOS) - from getClaudeDetectionPaths
-  if (process.platform === 'darwin') {
+  if (isMacOS()) {
     for (const p of detectionPaths.homebrewPaths) {
       await addInstallation(p, 'homebrew');
     }
   }
 
   // 4. NVM paths (Unix) - check Node.js version manager
-  if (!isWindows && existsSync(detectionPaths.nvmVersionsDir)) {
+  if (!isWindows() && existsSync(detectionPaths.nvmVersionsDir)) {
     try {
       const entries = await fsPromises.readdir(detectionPaths.nvmVersionsDir, { withFileTypes: true });
       const versionDirs = sortNvmVersionDirs(entries);
@@ -190,7 +188,7 @@ async function scanClaudeInstallations(activePath: string | null): Promise<Claud
   }
 
   // 6. Additional common paths not in getClaudeDetectionPaths (for broader scanning)
-  const additionalPaths = isWindows
+  const additionalPaths = isWindows()
     ? [] // Windows paths are well covered by detectionPaths.platformPaths
     : [
         path.join(homeDir, '.npm-global', 'bin', 'claude'),
@@ -311,7 +309,7 @@ async function fetchAvailableVersions(): Promise<string[]> {
  * @param version - The version to install (e.g., "1.0.5")
  */
 function getInstallVersionCommand(version: string): string {
-  if (process.platform === 'win32') {
+  if (isWindows()) {
     // Windows: kill running Claude processes first, then install specific version
     return `taskkill /IM claude.exe /F 2>nul; claude install --force ${version}`;
   } else {
@@ -325,7 +323,7 @@ function getInstallVersionCommand(version: string): string {
  * @param isUpdate - If true, Claude is already installed and we just need to update
  */
 function getInstallCommand(isUpdate: boolean): string {
-  if (process.platform === 'win32') {
+  if (isWindows()) {
     if (isUpdate) {
       // Update: kill running Claude processes first, then update with --force
       return 'taskkill /IM claude.exe /F 2>nul; claude install --force latest';
@@ -408,14 +406,13 @@ export function escapeBashCommand(str: string): string {
  * Supports macOS, Windows, and Linux terminals
  */
 export async function openTerminalWithCommand(command: string): Promise<void> {
-  const platform = process.platform;
   const settings = readSettingsFile();
   const preferredTerminal = settings?.preferredTerminal as string | undefined;
 
-  console.warn('[Claude Code] Platform:', platform);
+  console.warn('[Claude Code] Platform:', isWindows() ? 'Windows' : isMacOS() ? 'macOS' : 'Linux');
   console.warn('[Claude Code] Preferred terminal:', preferredTerminal);
 
-  if (platform === 'darwin') {
+  if (isMacOS()) {
     // macOS: Use AppleScript to open terminal with command
     const escapedCommand = escapeAppleScriptString(command);
     let script: string;
@@ -524,7 +521,7 @@ export async function openTerminalWithCommand(command: string): Promise<void> {
     console.warn('[Claude Code] Running AppleScript...');
     execFileSync('osascript', ['-e', script], { stdio: 'pipe' });
 
-  } else if (platform === 'win32') {
+  } else if (isWindows()) {
     // Windows: Use appropriate terminal
     // Values match SupportedTerminal type: 'windowsterminal', 'powershell', 'cmd', 'conemu', 'cmder',
     // 'gitbash', 'alacritty', 'wezterm', 'hyper', 'tabby', 'cygwin', 'msys2'
@@ -848,7 +845,7 @@ function checkProfileAuthentication(configDir: string): AuthCheckResult {
     }
 
     // On Linux, also check .credentials.json (Claude CLI may store tokens here)
-    if (process.platform === 'linux' && existsSync(credentialsJsonPath)) {
+    if (isLinux() && existsSync(credentialsJsonPath)) {
       const content = readFileSync(credentialsJsonPath, 'utf-8');
       const data = JSON.parse(content);
 
