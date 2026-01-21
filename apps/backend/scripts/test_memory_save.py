@@ -44,10 +44,11 @@ async def test_memory_imports():
     # Test memory_manager imports
     try:
         from agents.memory_manager import (
-            save_session_memory,
-            get_graphiti_context,
             debug_memory_system_status,
+            get_graphiti_context,
+            save_session_memory,
         )
+
         print("[OK] agents.memory_manager imports successful")
     except ImportError as e:
         errors.append(f"agents.memory_manager: {e}")
@@ -60,6 +61,7 @@ async def test_memory_imports():
             is_graphiti_memory_enabled,
             save_to_graphiti_async,
         )
+
         print("[OK] memory.graphiti_helpers imports successful")
     except ImportError as e:
         errors.append(f"memory.graphiti_helpers: {e}")
@@ -68,9 +70,10 @@ async def test_memory_imports():
     # Test graphiti_config imports
     try:
         from graphiti_config import (
-            is_graphiti_enabled,
             get_graphiti_status,
+            is_graphiti_enabled,
         )
+
         print("[OK] graphiti_config imports successful")
     except ImportError as e:
         errors.append(f"graphiti_config: {e}")
@@ -82,8 +85,11 @@ async def test_memory_imports():
             capture_exception,
             capture_message,
             init_sentry,
+        )
+        from core.sentry import (
             is_enabled as sentry_is_enabled,
         )
+
         print("[OK] core.sentry imports successful")
     except ImportError as e:
         errors.append(f"core.sentry: {e}")
@@ -91,10 +97,11 @@ async def test_memory_imports():
 
     # Test graphiti queries_pkg imports
     try:
-        from integrations.graphiti.queries_pkg.graphiti import GraphitiMemory
         from integrations.graphiti.queries_pkg.client import GraphitiClient
+        from integrations.graphiti.queries_pkg.graphiti import GraphitiMemory
         from integrations.graphiti.queries_pkg.queries import GraphitiQueries
         from integrations.graphiti.queries_pkg.search import GraphitiSearch
+
         print("[OK] integrations.graphiti.queries_pkg imports successful")
     except ImportError as e:
         errors.append(f"integrations.graphiti.queries_pkg: {e}")
@@ -126,7 +133,7 @@ async def test_graphiti_status():
         print(f"  LLM Provider: {status.get('llm_provider')}")
         print(f"  Embedder Provider: {status.get('embedder_provider')}")
 
-        if not status.get('available'):
+        if not status.get("available"):
             print(f"  Reason: {status.get('reason')}")
             print(f"  Errors: {status.get('errors')}")
 
@@ -170,10 +177,14 @@ async def test_sentry_status():
             if not sentry_dsn:
                 print("[INFO] Sentry disabled - no SENTRY_DSN configured (expected)")
             elif not sentry_dev:
-                print("[INFO] Sentry disabled in dev mode - set SENTRY_DEV=true to enable")
+                print(
+                    "[INFO] Sentry disabled in dev mode - set SENTRY_DEV=true to enable"
+                )
             else:
                 print("[INFO] Sentry disabled - sentry-sdk may not be installed")
-            print("[OK] Sentry integration configured correctly (disabled by configuration)")
+            print(
+                "[OK] Sentry integration configured correctly (disabled by configuration)"
+            )
 
         # Return True even if disabled - we're testing that the integration works,
         # not that Sentry is necessarily enabled
@@ -207,14 +218,12 @@ async def test_memory_save_flow():
             success = True
             subtasks_completed = ["test-subtask-1"]
             discoveries = {
-                "files_understood": {
-                    "test.py": "Test file for memory verification"
-                },
+                "files_understood": {"test.py": "Test file for memory verification"},
                 "patterns_found": ["Test pattern: Always verify imports"],
                 "gotchas_encountered": ["Test gotcha: Check async/await usage"],
             }
 
-            print(f"\nSaving test session memory...")
+            print("\nSaving test session memory...")
             print(f"  subtask_id: {subtask_id}")
             print(f"  session_num: {session_num}")
             print(f"  success: {success}")
@@ -229,7 +238,7 @@ async def test_memory_save_flow():
                 discoveries=discoveries,
             )
 
-            print(f"\nMemory Save Result:")
+            print("\nMemory Save Result:")
             print(f"  Success: {result}")
             print(f"  Storage Type: {storage_type}")
 
@@ -238,7 +247,12 @@ async def test_memory_save_flow():
 
                 # Verify file was created if file-based
                 if storage_type == "file":
-                    memory_file = spec_dir / "memory" / "session_insights" / f"session_{session_num:03d}.json"
+                    memory_file = (
+                        spec_dir
+                        / "memory"
+                        / "session_insights"
+                        / f"session_{session_num:03d}.json"
+                    )
                     if memory_file.exists():
                         print(f"[OK] Memory file created: {memory_file}")
                     else:
@@ -252,11 +266,13 @@ async def test_memory_save_flow():
         except Exception as e:
             print(f"[FAIL] Error during memory save test: {e}")
             import traceback
+
             traceback.print_exc()
 
             # Test Sentry capture
             try:
                 from core.sentry import capture_exception, is_enabled
+
                 if is_enabled():
                     capture_exception(
                         e,

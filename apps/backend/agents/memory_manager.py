@@ -121,7 +121,9 @@ async def get_graphiti_context(
         memory = await get_graphiti_memory(spec_dir, project_dir)
         if memory is None:
             if is_debug_enabled():
-                debug_warning("memory", "GraphitiMemory not available for context retrieval")
+                debug_warning(
+                    "memory", "GraphitiMemory not available for context retrieval"
+                )
             return None
 
         # ===== INVESTIGATION DEBUG LOGGING (subtask-1-1) =====
@@ -355,7 +357,7 @@ async def save_session_memory(
                     debug_warning("memory", "GraphitiMemory not available")
                     debug(
                         "memory",
-                        "get_graphiti_memory() returned None - this usually means Graphiti is disabled or provider config is invalid"
+                        "get_graphiti_memory() returned None - this usually means Graphiti is disabled or provider config is invalid",
                     )
                 # Continue to file-based fallback
             else:
@@ -378,14 +380,22 @@ async def save_session_memory(
                     )
 
                     # Log config details that affect initialization
-                    if hasattr(memory, 'config') and memory.config:
+                    if hasattr(memory, "config") and memory.config:
                         debug_detailed(
                             "memory",
                             "GraphitiMemory config state",
-                            config_is_valid=memory.config.is_valid() if hasattr(memory.config, 'is_valid') else 'unknown',
-                            llm_provider=memory.config.llm_provider if hasattr(memory.config, 'llm_provider') else 'unknown',
-                            embedder_provider=memory.config.embedder_provider if hasattr(memory.config, 'embedder_provider') else 'unknown',
-                            database=memory.config.database if hasattr(memory.config, 'database') else 'unknown',
+                            config_is_valid=memory.config.is_valid()
+                            if hasattr(memory.config, "is_valid")
+                            else "unknown",
+                            llm_provider=memory.config.llm_provider
+                            if hasattr(memory.config, "llm_provider")
+                            else "unknown",
+                            embedder_provider=memory.config.embedder_provider
+                            if hasattr(memory.config, "embedder_provider")
+                            else "unknown",
+                            database=memory.config.database
+                            if hasattr(memory.config, "database")
+                            else "unknown",
                         )
 
                     # Log state object details
@@ -393,10 +403,18 @@ async def save_session_memory(
                         debug_detailed(
                             "memory",
                             "GraphitiMemory state object",
-                            state_initialized=memory.state.initialized if hasattr(memory.state, 'initialized') else 'unknown',
-                            episode_count=memory.state.episode_count if hasattr(memory.state, 'episode_count') else 'unknown',
-                            last_session=memory.state.last_session if hasattr(memory.state, 'last_session') else 'unknown',
-                            error_count=len(memory.state.error_log) if hasattr(memory.state, 'error_log') else 0,
+                            state_initialized=memory.state.initialized
+                            if hasattr(memory.state, "initialized")
+                            else "unknown",
+                            episode_count=memory.state.episode_count
+                            if hasattr(memory.state, "episode_count")
+                            else "unknown",
+                            last_session=memory.state.last_session
+                            if hasattr(memory.state, "last_session")
+                            else "unknown",
+                            error_count=len(memory.state.error_log)
+                            if hasattr(memory.state, "error_log")
+                            else 0,
                         )
                     else:
                         debug("memory", "GraphitiMemory state object is None")

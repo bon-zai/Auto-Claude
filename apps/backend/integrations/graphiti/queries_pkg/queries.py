@@ -509,7 +509,9 @@ class GraphitiQueries:
             if insights.get("approach_outcome"):
                 insight_types.append("outcome:1")
             if insights.get("recommendations"):
-                insight_types.append(f"recommendations:{len(insights['recommendations'])}")
+                insight_types.append(
+                    f"recommendations:{len(insights['recommendations'])}"
+                )
 
             capture_exception(
                 e,
