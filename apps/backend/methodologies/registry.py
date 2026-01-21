@@ -205,9 +205,11 @@ class MethodologyRegistryImpl:
                 if not manifest_data:
                     continue
 
+                # Always store absolute paths to avoid CWD-dependent resolution
+                absolute_path = plugin_dir.resolve()
                 entry = RegistryEntry(
                     name=manifest_data.get("name", plugin_dir.name),
-                    path=str(plugin_dir),
+                    path=str(absolute_path),
                     version=manifest_data.get("version", "0.0.0"),
                     verified=True,
                     enabled=True,
@@ -246,9 +248,11 @@ class MethodologyRegistryImpl:
                 if not manifest_data:
                     continue
 
+                # Always store absolute paths to avoid CWD-dependent resolution
+                absolute_path = plugin_dir.resolve()
                 entry = RegistryEntry(
                     name=manifest_data.get("name", plugin_dir.name),
-                    path=str(plugin_dir),
+                    path=str(absolute_path),
                     version=manifest_data.get("version", "0.0.0"),
                     verified=False,
                     enabled=True,
@@ -344,6 +348,45 @@ class MethodologyRegistryImpl:
             if entry.name == name:
                 return entry
         return None
+
+    def resolve_plugin_path(self, entry: RegistryEntry) -> Path:
+        """Resolve a plugin path to an absolute path.
+
+        Handles both absolute and relative paths stored in the registry.
+        For verified plugins with relative paths, resolves against verified_plugins_dir.
+
+        Args:
+            entry: Registry entry containing the path
+
+        Returns:
+            Resolved absolute Path to the plugin directory
+        """
+        plugin_path = Path(entry.path)
+
+        # If absolute and exists, use it directly
+        if plugin_path.is_absolute():
+            return plugin_path
+
+        # For relative paths, try to resolve against verified_plugins_dir
+        if entry.verified and self._verified_plugins_dir is not None:
+            # Check if path is relative to verified_plugins_dir
+            resolved = self._verified_plugins_dir / plugin_path.name
+            if resolved.exists():
+                return resolved
+
+            # Also try joining the full relative path in case it's structured
+            resolved = self._verified_plugins_dir.parent.parent.parent / plugin_path
+            if resolved.exists():
+                return resolved
+
+        # For community plugins, try community_plugins_dir
+        if not entry.verified and self._community_plugins_dir is not None:
+            resolved = self._community_plugins_dir / plugin_path.name
+            if resolved.exists():
+                return resolved
+
+        # Fallback: return as-is (will likely fail, but preserves original behavior)
+        return plugin_path
 
     def get_methodology(self, name: str) -> MethodologyRunner:
         """Get a methodology runner by name.

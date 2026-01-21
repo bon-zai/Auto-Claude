@@ -79,8 +79,10 @@ if sys.platform == "win32":
     if "_new_stream" in dir():
         del _new_stream
 
-# Add auto-claude to path (parent of runners/)
+# Add auto-claude to path (parent of runners/) for relative imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root (parent of apps/) for absolute imports like 'from apps.backend...'
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Validate platform-specific dependencies BEFORE any imports that might
 # trigger graphiti_core -> real_ladybug -> pywintypes import chain (ACS-253)
@@ -246,9 +248,8 @@ def _run_methodology_pipeline(
             task_config=task_config,
         )
 
-        # Initialize the runner
-        debug("spec_runner", "Initializing methodology runner")
-        runner.initialize(context)
+        # Note: Runner initialization is handled by FullAutoExecutor.execute()
+        # to avoid double-initialization issues
 
         # Create and run the executor
         debug("spec_runner", "Creating FullAutoExecutor")

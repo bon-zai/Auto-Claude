@@ -117,7 +117,8 @@ class MethodologyLoader:
         if not entry.enabled:
             raise PluginLoadError(f"Methodology '{name}' is disabled")
 
-        plugin_path = Path(entry.path)
+        # Resolve the plugin path (handles both relative and absolute paths)
+        plugin_path = self._registry.resolve_plugin_path(entry)
         if not plugin_path.exists():
             raise PluginLoadError(
                 f"Plugin directory not found for methodology '{name}': {plugin_path}"
@@ -409,7 +410,8 @@ class MethodologyLoader:
         if entry is None:
             raise PluginLoadError(f"Methodology '{name}' is not registered")
 
-        plugin_path = Path(entry.path)
+        # Resolve the plugin path (handles both relative and absolute paths)
+        plugin_path = self._registry.resolve_plugin_path(entry)
         return self._load_manifest(name, plugin_path)
 
     def is_loaded(self, name: str) -> bool:

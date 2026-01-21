@@ -8,10 +8,22 @@ Architecture Source: architecture.md#BMAD-Plugin-Structure
 Story Reference: Story 6.1 - Create BMAD Methodology Plugin Structure
 """
 
+import asyncio
 import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Coroutine, TypeVar
 
+from apps.backend.core.debug import (
+    debug,
+    debug_section,
+    debug_success,
+    debug_error,
+    debug_warning,
+    is_debug_enabled,
+)
 from apps.backend.methodologies.protocols import (
     Artifact,
     Checkpoint,
@@ -27,9 +39,12 @@ from apps.backend.methodologies.protocols import (
 
 # Type hints for optional dependencies
 if TYPE_CHECKING:
-    pass
+    from apps.backend.task_logger import LogPhase
 
 logger = logging.getLogger(__name__)
+
+# Type variable for async return types
+T = TypeVar("T")
 
 
 class BMADRunner:
@@ -70,6 +85,9 @@ class BMADRunner:
 
     # BMAD output subdirectory name within spec_dir
     BMAD_OUTPUT_SUBDIR = "bmad"
+
+    # Default model for BMAD agent sessions
+    _DEFAULT_AGENT_MODEL = "claude-sonnet-4-20250514"
 
     # Phase configuration per complexity level (Story 6.8)
     # Maps ComplexityLevel to list of phase IDs that should be executed
@@ -141,20 +159,70 @@ class BMADRunner:
         # Task-scoped output directory (Story 6.9)
         self._output_dir: Path | None = None
 
+    def _reset_state(self) -> None:
+        """Reset runner state for re-initialization.
+
+        Called when initialize() is invoked on an already-initialized runner
+        to support runner reuse across multiple tasks.
+        """
+        self._context = None
+        self._phases = []
+        self._checkpoints = []
+        self._artifacts = []
+        self._initialized = False
+        self._project_dir = ""
+        self._spec_dir = None
+        self._task_config = None
+        self._complexity = None
+        self._current_progress_callback = None
+        self._output_dir = None
+
+    def _run_async(self, coro: Coroutine[Any, Any, T]) -> T:
+        """Run an async coroutine from sync context.
+
+        Handles the case where we might already be in an async context
+        (e.g., when called from FullAutoExecutor).
+
+        Args:
+            coro: The coroutine to run
+
+        Returns:
+            The result of the coroutine
+
+        Note:
+            Uses asyncio.run() which creates a new event loop. This is
+            preferred over get_event_loop() which is deprecated in Python 3.10+.
+        """
+        try:
+            # Check if we're already in an async context
+            asyncio.get_running_loop()
+            # We're in an async context, run in thread
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                return executor.submit(asyncio.run, coro).result()
+        except RuntimeError:
+            # No running loop, safe to use asyncio.run
+            return asyncio.run(coro)
+
     def initialize(self, context: RunContext) -> None:
         """Initialize the runner with framework context.
 
         Sets up the runner with access to framework services and
         initializes phase, checkpoint, and artifact definitions.
 
+        This method can be called multiple times to reinitialize the runner
+        for a new task context. Previous state is reset.
+
         Args:
             context: RunContext with access to all framework services
-
-        Raises:
-            RuntimeError: If runner is already initialized
         """
+        debug_section("bmad.methodology", "INITIALIZING BMAD METHODOLOGY")
+
+        # Reset state if already initialized (support runner reuse)
         if self._initialized:
-            raise RuntimeError("BMADRunner already initialized")
+            debug("bmad.methodology", "Resetting state for re-initialization")
+            self._reset_state()
 
         self._context = context
         self._project_dir = context.workspace.get_project_root()
@@ -166,13 +234,31 @@ class BMADRunner:
         if spec_dir_str:
             self._spec_dir = Path(spec_dir_str)
 
+        debug(
+            "bmad.methodology",
+            "Configuration loaded",
+            project_dir=self._project_dir,
+            spec_dir=str(self._spec_dir) if self._spec_dir else "(none)",
+            complexity=self._complexity.value if self._complexity else "(default)",
+            task_description=context.task_config.metadata.get("task_description", "(none)")[:100],
+        )
+
         # Story 6.9: Initialize task-scoped output directory
         self._init_output_dir()
+
+        # Initialize BMAD skills in target project
+        self._init_skills()
 
         self._init_phases()
         self._init_checkpoints()
         self._init_artifacts()
         self._initialized = True
+
+        debug_success(
+            "bmad.methodology",
+            "BMAD methodology initialized",
+            enabled_phases=self.get_enabled_phases(),
+        )
 
     def get_phases(self) -> list[Phase]:
         """Return phase definitions for the BMAD methodology.
@@ -332,83 +418,123 @@ class BMADRunner:
         return handler()
 
     # =========================================================================
-    # Phase Implementation Stubs
+    # Phase Implementations using Claude Agent SDK
     # =========================================================================
 
     def _execute_analyze(self) -> PhaseResult:
-        """Execute the project analysis phase.
+        """Execute the project analysis phase via BMAD document-project workflow.
 
-        Analyzes the project structure and gathers context for subsequent phases.
-        Produces analysis.json artifact in the task-scoped output directory.
+        Uses Claude Agent SDK to run the BMAD document-project workflow which
+        analyzes brownfield project structure and creates project documentation.
 
         Returns:
             PhaseResult with success status and artifacts
 
         Story Reference: Story 6.2 - Implement BMAD Project Analysis Phase
-        Story Reference: Story 6.9 - Task-Scoped Output Directories
         """
-        # Import here to avoid circular imports
-        from apps.backend.methodologies.bmad.workflows.analysis import (
-            analyze_project,
-            load_analysis,
-        )
+        from apps.backend.agents.session import run_agent_session
+        from apps.backend.core.client import create_client
+        from apps.backend.task_logger import LogPhase
 
-        project_dir = Path(self._project_dir)
+        debug_section("bmad.methodology", "ANALYZE PHASE - document-project")
 
-        # Check if output directory is configured
-        if self._output_dir is None:
+        if self._spec_dir is None:
+            debug_error("bmad.methodology", "No spec_dir configured")
             return PhaseResult(
                 success=False,
                 phase_id="analyze",
-                error="No output directory configured. Set spec_dir in task_config.metadata.",
+                error="No spec_dir configured. Set spec_dir in task_config.metadata.",
             )
 
-        # Check if analysis already exists
-        self._invoke_progress_callback("Checking for existing analysis...", 5.0)
-        existing = load_analysis(self._output_dir)
-        if existing:
-            analysis_file = self._output_dir / "analysis.json"
-            self._invoke_progress_callback("Found existing analysis", 100.0)
+        project_dir = Path(self._project_dir)
+
+        debug(
+            "bmad.methodology",
+            "Phase configuration",
+            project_dir=str(project_dir),
+            spec_dir=str(self._spec_dir),
+        )
+
+        # Report progress
+        self._invoke_progress_callback("Starting BMAD document-project workflow...", 10.0)
+
+        try:
+            # Get model from task config or use default
+            model = (
+                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
+                if self._task_config
+                else self._DEFAULT_AGENT_MODEL
+            )
+
+            # Create client for BMAD agent
+            self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
+            debug(
+                "bmad.methodology",
+                "Creating Claude Agent SDK client",
+                model=model,
+                agent_type="coder",
+            )
+            client = create_client(
+                project_dir,
+                self._spec_dir,
+                model=model,
+                agent_type="coder",  # Use coder permissions for file operations
+                max_thinking_tokens=None,
+            )
+            debug_success("bmad.methodology", "Client created successfully")
+
+            # The prompt is the BMAD slash command
+            prompt = "/bmad:bmm:workflows:document-project"
+
+            debug(
+                "bmad.methodology",
+                "Invoking BMAD workflow via slash command",
+                prompt=prompt,
+            )
+
+            # Run agent session
+            self._invoke_progress_callback("Running document-project workflow...", 30.0)
+
+            async def _run_analyze():
+                debug("bmad.methodology", "Starting agent session...")
+                async with client:
+                    status, response = await run_agent_session(
+                        client,
+                        prompt,
+                        self._spec_dir,
+                        verbose=False,
+                        phase=LogPhase.PLANNING,
+                    )
+                    debug(
+                        "bmad.methodology",
+                        "Agent session completed",
+                        status=status,
+                        response_length=len(response) if response else 0,
+                    )
+                    return status, response
+
+            status, response = self._run_async(_run_analyze())
+
+            self._invoke_progress_callback("Document-project workflow completed", 100.0)
+
+            debug_success(
+                "bmad.methodology",
+                "ANALYZE phase completed",
+                status=status,
+            )
+
+            # Check for output artifacts
+            # BMAD writes to _bmad-output/project_knowledge/ by default
+            # We'll consider it successful if the agent completed
             return PhaseResult(
                 success=True,
                 phase_id="analyze",
-                message="Analysis already exists",
-                artifacts=[str(analysis_file)],
-                metadata={"project_name": existing.project_name},
+                message="Project documentation created via BMAD workflow",
+                metadata={"agent_status": status},
             )
-
-        # Run project analysis
-        self._invoke_progress_callback("Starting project analysis...", 10.0)
-        try:
-            analysis = analyze_project(
-                project_dir=project_dir,
-                output_dir=self._output_dir,
-                progress_callback=self._invoke_progress_callback,
-            )
-
-            analysis_file = self._output_dir / "analysis.json"
-            if analysis_file.exists():
-                return PhaseResult(
-                    success=True,
-                    phase_id="analyze",
-                    message=f"Project analysis complete for '{analysis.project_name}'",
-                    artifacts=[str(analysis_file)],
-                    metadata={
-                        "project_name": analysis.project_name,
-                        "languages": analysis.tech_stack.languages,
-                        "frameworks": analysis.tech_stack.frameworks,
-                        "is_monorepo": analysis.structure.is_monorepo,
-                        "bmad_config_exists": analysis.bmad_config.exists,
-                    },
-                )
-            else:
-                return PhaseResult(
-                    success=False,
-                    phase_id="analyze",
-                    error="Analysis completed but artifact file was not created",
-                )
 
         except Exception as e:
+            debug_error("bmad.methodology", f"Project analysis failed: {e}")
             logger.error(f"Project analysis failed: {e}")
             return PhaseResult(
                 success=False,
@@ -417,85 +543,125 @@ class BMADRunner:
             )
 
     def _execute_prd(self) -> PhaseResult:
-        """Execute the PRD creation phase.
+        """Execute the PRD creation phase via BMAD create-prd workflow.
 
-        Integrates with BMAD PRD workflow to create product requirements document.
-        Produces prd.md artifact.
+        Uses Claude Agent SDK to run the BMAD create-prd workflow which
+        creates a Product Requirements Document. For brownfield projects,
+        this automatically loads project documentation and adapts the flow.
 
         Returns:
             PhaseResult with success status and artifacts
 
         Story Reference: Story 6.3 - Implement BMAD PRD Workflow Integration
         """
-        # Import here to avoid circular imports
-        from apps.backend.methodologies.bmad.workflows.prd import (
-            create_prd,
-            load_prd,
-        )
+        from apps.backend.agents.session import run_agent_session
+        from apps.backend.core.client import create_client
+        from apps.backend.task_logger import LogPhase
 
-        # Check if output directory is configured
-        if self._output_dir is None:
+        debug_section("bmad.methodology", "PRD PHASE - create-prd")
+
+        if self._spec_dir is None:
+            debug_error("bmad.methodology", "No spec_dir configured")
             return PhaseResult(
                 success=False,
                 phase_id="prd",
-                error="No output directory configured. Set spec_dir in task_config.metadata.",
+                error="No spec_dir configured. Set spec_dir in task_config.metadata.",
             )
 
-        # Check if PRD already exists
-        self._invoke_progress_callback("Checking for existing PRD...", 5.0)
-        existing = load_prd(self._output_dir)
-        if existing:
-            prd_file = self._output_dir / "prd.md"
-            self._invoke_progress_callback("Found existing PRD", 100.0)
+        project_dir = Path(self._project_dir)
+
+        debug(
+            "bmad.methodology",
+            "Phase configuration",
+            project_dir=str(project_dir),
+            spec_dir=str(self._spec_dir),
+        )
+
+        # Report progress
+        self._invoke_progress_callback("Starting BMAD create-prd workflow...", 10.0)
+
+        try:
+            # Get model from task config or use default
+            model = (
+                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
+                if self._task_config
+                else self._DEFAULT_AGENT_MODEL
+            )
+
+            # Create client for BMAD agent
+            self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
+            debug(
+                "bmad.methodology",
+                "Creating Claude Agent SDK client",
+                model=model,
+                agent_type="coder",
+            )
+            client = create_client(
+                project_dir,
+                self._spec_dir,
+                model=model,
+                agent_type="coder",
+                max_thinking_tokens=None,
+            )
+            debug_success("bmad.methodology", "Client created successfully")
+
+            # Build the prompt with task description context
+            task_description = ""
+            if self._task_config:
+                task_description = self._task_config.metadata.get("task_description", "")
+
+            # The prompt is the BMAD slash command with optional context
+            prompt = "/bmad:bmm:workflows:create-prd"
+            if task_description:
+                prompt += f"\n\nTask: {task_description}"
+
+            debug(
+                "bmad.methodology",
+                "Invoking BMAD workflow via slash command",
+                prompt=prompt,
+                task_description=task_description or "(none)",
+            )
+
+            # Run agent session
+            self._invoke_progress_callback("Running create-prd workflow...", 30.0)
+
+            async def _run_prd():
+                debug("bmad.methodology", "Starting agent session...")
+                async with client:
+                    status, response = await run_agent_session(
+                        client,
+                        prompt,
+                        self._spec_dir,
+                        verbose=False,
+                        phase=LogPhase.PLANNING,
+                    )
+                    debug(
+                        "bmad.methodology",
+                        "Agent session completed",
+                        status=status,
+                        response_length=len(response) if response else 0,
+                    )
+                    return status, response
+
+            status, response = self._run_async(_run_prd())
+
+            self._invoke_progress_callback("PRD workflow completed", 100.0)
+
+            debug_success(
+                "bmad.methodology",
+                "PRD phase completed",
+                status=status,
+            )
+
             return PhaseResult(
                 success=True,
                 phase_id="prd",
-                message="PRD already exists",
-                artifacts=[str(prd_file)],
-                metadata={"project_name": existing.project_name},
+                message="PRD created via BMAD workflow",
+                metadata={"agent_status": status},
             )
-
-        # Get task description from task config if available
-        task_description = ""
-        if self._task_config:
-            task_description = self._task_config.metadata.get("task_description", "")
-
-        # Create PRD
-        self._invoke_progress_callback("Creating PRD...", 10.0)
-        try:
-            prd = create_prd(
-                output_dir=self._output_dir,
-                spec_dir=self._spec_dir,
-                task_description=task_description,
-                progress_callback=self._invoke_progress_callback,
-            )
-
-            prd_file = self._output_dir / "prd.md"
-            prd_json_file = self._output_dir / "prd.json"
-
-            if prd_file.exists():
-                return PhaseResult(
-                    success=True,
-                    phase_id="prd",
-                    message=f"PRD created for '{prd.project_name}'",
-                    artifacts=[str(prd_file), str(prd_json_file)],
-                    metadata={
-                        "project_name": prd.project_name,
-                        "num_functional_requirements": len(prd.functional_requirements),
-                        "num_non_functional_requirements": len(
-                            prd.non_functional_requirements
-                        ),
-                        "prd_status": prd.metadata.status,
-                    },
-                )
-            else:
-                return PhaseResult(
-                    success=False,
-                    phase_id="prd",
-                    error="PRD creation completed but artifact file was not created",
-                )
 
         except Exception as e:
+            debug_error("bmad.methodology", f"PRD creation failed: {e}")
             logger.error(f"PRD creation failed: {e}")
             return PhaseResult(
                 success=False,
@@ -504,77 +670,112 @@ class BMADRunner:
             )
 
     def _execute_architecture(self) -> PhaseResult:
-        """Execute the architecture phase.
+        """Execute the architecture phase via BMAD create-architecture workflow.
 
-        Integrates with BMAD architecture workflow to create architecture document.
-        Produces architecture.md artifact.
+        Uses Claude Agent SDK to run the BMAD create-architecture workflow which
+        creates architecture decisions document.
 
         Returns:
             PhaseResult with success status and artifacts
 
         Story Reference: Story 6.4 - Implement BMAD Architecture Workflow Integration
         """
-        # Import here to avoid circular imports
-        from apps.backend.methodologies.bmad.workflows.architecture import (
-            create_architecture,
-            load_architecture,
-        )
+        from apps.backend.agents.session import run_agent_session
+        from apps.backend.core.client import create_client
+        from apps.backend.task_logger import LogPhase
 
-        # Check if output directory is configured
-        if self._output_dir is None:
+        debug_section("bmad.methodology", "ARCHITECTURE PHASE - create-architecture")
+
+        if self._spec_dir is None:
+            debug_error("bmad.methodology", "No spec_dir configured")
             return PhaseResult(
                 success=False,
                 phase_id="architecture",
-                error="No output directory configured. Set spec_dir in task_config.metadata.",
+                error="No spec_dir configured. Set spec_dir in task_config.metadata.",
             )
 
-        # Check if architecture already exists
-        self._invoke_progress_callback("Checking for existing architecture...", 5.0)
-        existing = load_architecture(self._output_dir)
-        if existing:
-            arch_file = self._output_dir / "architecture.md"
-            self._invoke_progress_callback("Found existing architecture", 100.0)
+        project_dir = Path(self._project_dir)
+
+        debug(
+            "bmad.methodology",
+            "Phase configuration",
+            project_dir=str(project_dir),
+            spec_dir=str(self._spec_dir),
+        )
+
+        # Report progress
+        self._invoke_progress_callback("Starting BMAD create-architecture workflow...", 10.0)
+
+        try:
+            model = (
+                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
+                if self._task_config
+                else self._DEFAULT_AGENT_MODEL
+            )
+
+            self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
+            debug(
+                "bmad.methodology",
+                "Creating Claude Agent SDK client",
+                model=model,
+                agent_type="coder",
+            )
+            client = create_client(
+                project_dir,
+                self._spec_dir,
+                model=model,
+                agent_type="coder",
+                max_thinking_tokens=None,
+            )
+            debug_success("bmad.methodology", "Client created successfully")
+
+            prompt = "/bmad:bmm:workflows:create-architecture"
+
+            debug(
+                "bmad.methodology",
+                "Invoking BMAD workflow via slash command",
+                prompt=prompt,
+            )
+
+            self._invoke_progress_callback("Running create-architecture workflow...", 30.0)
+
+            async def _run_architecture():
+                debug("bmad.methodology", "Starting agent session...")
+                async with client:
+                    status, response = await run_agent_session(
+                        client,
+                        prompt,
+                        self._spec_dir,
+                        verbose=False,
+                        phase=LogPhase.PLANNING,
+                    )
+                    debug(
+                        "bmad.methodology",
+                        "Agent session completed",
+                        status=status,
+                        response_length=len(response) if response else 0,
+                    )
+                    return status, response
+
+            status, response = self._run_async(_run_architecture())
+
+            self._invoke_progress_callback("Architecture workflow completed", 100.0)
+
+            debug_success(
+                "bmad.methodology",
+                "ARCHITECTURE phase completed",
+                status=status,
+            )
+
             return PhaseResult(
                 success=True,
                 phase_id="architecture",
-                message="Architecture already exists",
-                artifacts=[str(arch_file)],
-                metadata={"project_name": existing.project_name},
+                message="Architecture created via BMAD workflow",
+                metadata={"agent_status": status},
             )
-
-        # Create Architecture
-        self._invoke_progress_callback("Creating architecture document...", 10.0)
-        try:
-            arch = create_architecture(
-                output_dir=self._output_dir,
-                progress_callback=self._invoke_progress_callback,
-            )
-
-            arch_file = self._output_dir / "architecture.md"
-            arch_json_file = self._output_dir / "architecture.json"
-
-            if arch_file.exists():
-                return PhaseResult(
-                    success=True,
-                    phase_id="architecture",
-                    message=f"Architecture created for '{arch.project_name}'",
-                    artifacts=[str(arch_file), str(arch_json_file)],
-                    metadata={
-                        "project_name": arch.project_name,
-                        "num_components": len(arch.components),
-                        "num_layers": len(arch.layers),
-                        "num_decisions": len(arch.decisions),
-                        "architecture_status": arch.metadata.status,
-                    },
-                )
-            else:
-                return PhaseResult(
-                    success=False,
-                    phase_id="architecture",
-                    error="Architecture creation completed but artifact file was not created",
-                )
 
         except Exception as e:
+            debug_error("bmad.methodology", f"Architecture creation failed: {e}")
             logger.error(f"Architecture creation failed: {e}")
             return PhaseResult(
                 success=False,
@@ -583,89 +784,111 @@ class BMADRunner:
             )
 
     def _execute_epics(self) -> PhaseResult:
-        """Execute the epic and story creation phase.
+        """Execute the epic and story creation phase via BMAD workflow.
 
-        Integrates with BMAD epics workflow to create epics and initial stories.
-        Produces epics.md artifact.
+        Uses Claude Agent SDK to run the BMAD create-epics-and-stories workflow
+        which transforms PRD + Architecture into implementation-ready stories.
 
         Returns:
             PhaseResult with success status and artifacts
 
         Story Reference: Story 6.5 - Implement BMAD Epic and Story Creation
         """
-        # Import here to avoid circular imports
-        from apps.backend.methodologies.bmad.workflows.epics import (
-            create_epics,
-            load_epics,
-        )
+        from apps.backend.agents.session import run_agent_session
+        from apps.backend.core.client import create_client
+        from apps.backend.task_logger import LogPhase
 
-        # Check if output directory is configured
-        if self._output_dir is None:
+        debug_section("bmad.methodology", "EPICS PHASE - create-epics-and-stories")
+
+        if self._spec_dir is None:
+            debug_error("bmad.methodology", "No spec_dir configured")
             return PhaseResult(
                 success=False,
                 phase_id="epics",
-                error="No output directory configured. Set spec_dir in task_config.metadata.",
+                error="No spec_dir configured. Set spec_dir in task_config.metadata.",
             )
 
-        # Check if epics already exist
-        self._invoke_progress_callback("Checking for existing epics...", 5.0)
-        existing = load_epics(self._output_dir)
-        if existing:
-            epics_file = self._output_dir / "epics.md"
-            self._invoke_progress_callback("Found existing epics", 100.0)
-            total_stories = sum(len(e.stories) for e in existing.epics)
+        project_dir = Path(self._project_dir)
+
+        debug(
+            "bmad.methodology",
+            "Phase configuration",
+            project_dir=str(project_dir),
+            spec_dir=str(self._spec_dir),
+        )
+
+        self._invoke_progress_callback("Starting BMAD create-epics-and-stories workflow...", 10.0)
+
+        try:
+            model = (
+                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
+                if self._task_config
+                else self._DEFAULT_AGENT_MODEL
+            )
+
+            self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
+            debug(
+                "bmad.methodology",
+                "Creating Claude Agent SDK client",
+                model=model,
+                agent_type="coder",
+            )
+            client = create_client(
+                project_dir,
+                self._spec_dir,
+                model=model,
+                agent_type="coder",
+                max_thinking_tokens=None,
+            )
+            debug_success("bmad.methodology", "Client created successfully")
+
+            prompt = "/bmad:bmm:workflows:create-epics-and-stories"
+
+            debug(
+                "bmad.methodology",
+                "Invoking BMAD workflow via slash command",
+                prompt=prompt,
+            )
+
+            self._invoke_progress_callback("Running create-epics-and-stories workflow...", 30.0)
+
+            async def _run_epics():
+                debug("bmad.methodology", "Starting agent session...")
+                async with client:
+                    status, response = await run_agent_session(
+                        client,
+                        prompt,
+                        self._spec_dir,
+                        verbose=False,
+                        phase=LogPhase.PLANNING,
+                    )
+                    debug(
+                        "bmad.methodology",
+                        "Agent session completed",
+                        status=status,
+                        response_length=len(response) if response else 0,
+                    )
+                    return status, response
+
+            status, response = self._run_async(_run_epics())
+
+            self._invoke_progress_callback("Epics and stories workflow completed", 100.0)
+
+            debug_success(
+                "bmad.methodology",
+                "EPICS phase completed",
+                status=status,
+            )
+
             return PhaseResult(
                 success=True,
                 phase_id="epics",
-                message="Epics already exist",
-                artifacts=[str(epics_file)],
-                metadata={
-                    "project_name": existing.project_name,
-                    "num_epics": len(existing.epics),
-                    "num_stories": total_stories,
-                },
+                message="Epics and stories created via BMAD workflow",
+                metadata={"agent_status": status},
             )
-
-        # Create Epics
-        self._invoke_progress_callback("Creating epics and stories...", 10.0)
-        try:
-            epics_doc = create_epics(
-                output_dir=self._output_dir,
-                progress_callback=self._invoke_progress_callback,
-            )
-
-            epics_file = self._output_dir / "epics.md"
-            epics_json_file = self._output_dir / "epics.json"
-            stories_dir = self._output_dir / "stories"
-
-            # Collect all story file paths
-            story_files = []
-            if stories_dir.exists():
-                story_files = [str(f) for f in stories_dir.glob("*.md")]
-
-            total_stories = sum(len(e.stories) for e in epics_doc.epics)
-
-            if epics_file.exists():
-                return PhaseResult(
-                    success=True,
-                    phase_id="epics",
-                    message=f"Epics created for '{epics_doc.project_name}'",
-                    artifacts=[str(epics_file), str(epics_json_file)] + story_files,
-                    metadata={
-                        "project_name": epics_doc.project_name,
-                        "num_epics": len(epics_doc.epics),
-                        "num_stories": total_stories,
-                        "epics_status": epics_doc.metadata.status,
-                    },
-                )
-            else:
-                return PhaseResult(
-                    success=False,
-                    phase_id="epics",
-                    error="Epics creation completed but artifact file was not created",
-                )
 
         except Exception as e:
+            debug_error("bmad.methodology", f"Epics creation failed: {e}")
             logger.error(f"Epics creation failed: {e}")
             return PhaseResult(
                 success=False,
@@ -674,70 +897,111 @@ class BMADRunner:
             )
 
     def _execute_stories(self) -> PhaseResult:
-        """Execute the story preparation phase.
+        """Execute the story preparation phase via BMAD create-story workflow.
 
-        Prepares and refines stories for development.
-        Produces stories/*.md artifacts.
+        Uses Claude Agent SDK to run the BMAD create-story workflow which
+        prepares individual stories for development.
 
         Returns:
             PhaseResult with success status and artifacts
 
         Story Reference: Story 6.5 - Implement BMAD Epic and Story Creation
         """
-        # Import here to avoid circular imports
-        from apps.backend.methodologies.bmad.workflows.epics import (
-            load_epics,
-            prepare_stories,
+        from apps.backend.agents.session import run_agent_session
+        from apps.backend.core.client import create_client
+        from apps.backend.task_logger import LogPhase
+
+        debug_section("bmad.methodology", "STORIES PHASE - create-story")
+
+        if self._spec_dir is None:
+            debug_error("bmad.methodology", "No spec_dir configured")
+            return PhaseResult(
+                success=False,
+                phase_id="stories",
+                error="No spec_dir configured. Set spec_dir in task_config.metadata.",
+            )
+
+        project_dir = Path(self._project_dir)
+
+        debug(
+            "bmad.methodology",
+            "Phase configuration",
+            project_dir=str(project_dir),
+            spec_dir=str(self._spec_dir),
         )
 
-        # Check if output directory is configured
-        if self._output_dir is None:
-            return PhaseResult(
-                success=False,
-                phase_id="stories",
-                error="No output directory configured. Set spec_dir in task_config.metadata.",
-            )
+        self._invoke_progress_callback("Starting BMAD create-story workflow...", 10.0)
 
-        # Load epics to check if they exist
-        self._invoke_progress_callback("Loading epics for story preparation...", 5.0)
-        epics_doc = load_epics(self._output_dir)
-        if epics_doc is None:
-            return PhaseResult(
-                success=False,
-                phase_id="stories",
-                error="No epics found. Run epics phase first.",
-            )
-
-        # Prepare stories for development
-        self._invoke_progress_callback("Preparing stories for development...", 20.0)
         try:
-            ready_stories = prepare_stories(
-                output_dir=self._output_dir,
-                progress_callback=self._invoke_progress_callback,
+            model = (
+                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
+                if self._task_config
+                else self._DEFAULT_AGENT_MODEL
             )
 
-            # Collect story file paths
-            stories_dir = self._output_dir / "stories"
-            story_files = []
-            if stories_dir.exists():
-                story_files = [str(f) for f in stories_dir.glob("*.md")]
+            self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
+            debug(
+                "bmad.methodology",
+                "Creating Claude Agent SDK client",
+                model=model,
+                agent_type="coder",
+            )
+            client = create_client(
+                project_dir,
+                self._spec_dir,
+                model=model,
+                agent_type="coder",
+                max_thinking_tokens=None,
+            )
+            debug_success("bmad.methodology", "Client created successfully")
 
-            self._invoke_progress_callback("Story preparation complete", 100.0)
+            prompt = "/bmad:bmm:workflows:create-story"
+
+            debug(
+                "bmad.methodology",
+                "Invoking BMAD workflow via slash command",
+                prompt=prompt,
+            )
+
+            self._invoke_progress_callback("Running create-story workflow...", 30.0)
+
+            async def _run_stories():
+                debug("bmad.methodology", "Starting agent session...")
+                async with client:
+                    status, response = await run_agent_session(
+                        client,
+                        prompt,
+                        self._spec_dir,
+                        verbose=False,
+                        phase=LogPhase.PLANNING,
+                    )
+                    debug(
+                        "bmad.methodology",
+                        "Agent session completed",
+                        status=status,
+                        response_length=len(response) if response else 0,
+                    )
+                    return status, response
+
+            status, response = self._run_async(_run_stories())
+
+            self._invoke_progress_callback("Story preparation workflow completed", 100.0)
+
+            debug_success(
+                "bmad.methodology",
+                "STORIES phase completed",
+                status=status,
+            )
 
             return PhaseResult(
                 success=True,
                 phase_id="stories",
-                message=f"Prepared {len(ready_stories)} stories for development",
-                artifacts=story_files,
-                metadata={
-                    "project_name": epics_doc.project_name,
-                    "num_ready_stories": len(ready_stories),
-                    "num_total_stories": len(epics_doc.get_all_stories()),
-                    "story_ids": [s.id for s in ready_stories],
-                },
+                message="Stories prepared via BMAD workflow",
+                metadata={"agent_status": status},
             )
 
         except Exception as e:
+            debug_error("bmad.methodology", f"Story preparation failed: {e}")
             logger.error(f"Story preparation failed: {e}")
             return PhaseResult(
                 success=False,
@@ -746,135 +1010,111 @@ class BMADRunner:
             )
 
     def _execute_dev(self) -> PhaseResult:
-        """Execute the development phase.
+        """Execute the development phase via BMAD dev-story workflow.
 
-        Integrates with BMAD dev-story workflow for implementation.
-        Implements stories from the backlog in priority order.
-        Produces dev-logs/*.json and sprint-status.json artifacts.
+        Uses Claude Agent SDK to run the BMAD dev-story workflow which
+        implements stories from the backlog.
 
         Returns:
             PhaseResult with success status and artifacts
 
         Story Reference: Story 6.6 - Implement BMAD Dev-Story Workflow Integration
         """
-        # Import here to avoid circular imports
-        from apps.backend.methodologies.bmad.workflows.dev import (
-            get_implementation_status,
-            get_next_story,
-            implement_story,
+        from apps.backend.agents.session import run_agent_session
+        from apps.backend.core.client import create_client
+        from apps.backend.task_logger import LogPhase
+
+        debug_section("bmad.methodology", "DEV PHASE - dev-story")
+
+        if self._spec_dir is None:
+            debug_error("bmad.methodology", "No spec_dir configured")
+            return PhaseResult(
+                success=False,
+                phase_id="dev",
+                error="No spec_dir configured. Set spec_dir in task_config.metadata.",
+            )
+
+        project_dir = Path(self._project_dir)
+
+        debug(
+            "bmad.methodology",
+            "Phase configuration",
+            project_dir=str(project_dir),
+            spec_dir=str(self._spec_dir),
         )
 
-        # Check if output directory is configured
-        if self._output_dir is None:
-            return PhaseResult(
-                success=False,
-                phase_id="dev",
-                error="No output directory configured. Set spec_dir in task_config.metadata.",
+        self._invoke_progress_callback("Starting BMAD dev-story workflow...", 10.0)
+
+        try:
+            model = (
+                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
+                if self._task_config
+                else self._DEFAULT_AGENT_MODEL
             )
 
-        # Get current implementation status
-        self._invoke_progress_callback("Checking implementation status...", 5.0)
-        status = get_implementation_status(self._output_dir)
+            self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
+            debug(
+                "bmad.methodology",
+                "Creating Claude Agent SDK client",
+                model=model,
+                agent_type="coder",
+            )
+            client = create_client(
+                project_dir,
+                self._spec_dir,
+                model=model,
+                agent_type="coder",
+                max_thinking_tokens=None,
+            )
+            debug_success("bmad.methodology", "Client created successfully")
 
-        if not status["has_epics"]:
-            return PhaseResult(
-                success=False,
-                phase_id="dev",
-                error="No epics found. Run epics phase first.",
+            prompt = "/bmad:bmm:workflows:dev-story"
+
+            debug(
+                "bmad.methodology",
+                "Invoking BMAD workflow via slash command",
+                prompt=prompt,
             )
 
-        # Check if there are stories to implement
-        stories_total = status["stories"]["total"]
-        stories_done = status["stories"]["done"]
+            self._invoke_progress_callback("Running dev-story workflow...", 30.0)
 
-        if stories_done == stories_total and stories_total > 0:
-            # All stories already implemented
-            self._invoke_progress_callback("All stories already implemented", 100.0)
+            async def _run_dev():
+                debug("bmad.methodology", "Starting agent session...")
+                async with client:
+                    status, response = await run_agent_session(
+                        client,
+                        prompt,
+                        self._spec_dir,
+                        verbose=False,
+                        phase=LogPhase.CODING,
+                    )
+                    debug(
+                        "bmad.methodology",
+                        "Agent session completed",
+                        status=status,
+                        response_length=len(response) if response else 0,
+                    )
+                    return status, response
+
+            status, response = self._run_async(_run_dev())
+
+            self._invoke_progress_callback("Dev-story workflow completed", 100.0)
+
+            debug_success(
+                "bmad.methodology",
+                "DEV phase completed",
+                status=status,
+            )
+
             return PhaseResult(
                 success=True,
                 phase_id="dev",
-                message=f"All {stories_total} stories already implemented",
-                artifacts=[str(self._output_dir / "sprint-status.json")],
-                metadata={
-                    "stories_total": stories_total,
-                    "stories_completed": stories_done,
-                    "all_complete": True,
-                },
+                message="Development completed via BMAD workflow",
+                metadata={"agent_status": status},
             )
-
-        # Get next story to implement
-        self._invoke_progress_callback("Finding next story to implement...", 10.0)
-        next_story = get_next_story(self._output_dir)
-
-        if next_story is None:
-            # No stories ready (may be blocked by dependencies)
-            in_progress = status["stories"]["in_progress"]
-            if in_progress > 0:
-                return PhaseResult(
-                    success=True,
-                    phase_id="dev",
-                    message=f"{in_progress} stories in progress, none ready to start",
-                    artifacts=[str(self._output_dir / "sprint-status.json")],
-                    metadata=status["stories"],
-                )
-            else:
-                return PhaseResult(
-                    success=False,
-                    phase_id="dev",
-                    error="No stories available for implementation",
-                )
-
-        # Implement the next story
-        self._invoke_progress_callback(
-            f"Implementing story {next_story.id}: {next_story.title}...", 20.0
-        )
-
-        try:
-            result = implement_story(
-                story_id=next_story.id,
-                output_dir=self._output_dir,
-                progress_callback=self._invoke_progress_callback,
-            )
-
-            if result.success:
-                # Collect artifacts
-                artifacts = []
-                sprint_status_file = self._output_dir / "sprint-status.json"
-                if sprint_status_file.exists():
-                    artifacts.append(str(sprint_status_file))
-
-                dev_log_file = (
-                    self._output_dir / "dev-logs" / f"{next_story.id.lower()}-implementation.json"
-                )
-                if dev_log_file.exists():
-                    artifacts.append(str(dev_log_file))
-
-                self._invoke_progress_callback(
-                    f"Story {next_story.id} ready for implementation", 100.0
-                )
-
-                return PhaseResult(
-                    success=True,
-                    phase_id="dev",
-                    message=f"Story {next_story.id} ({next_story.title}) prepared for implementation",
-                    artifacts=artifacts,
-                    metadata={
-                        "story_id": next_story.id,
-                        "story_title": next_story.title,
-                        "story_priority": next_story.priority,
-                        "story_points": next_story.story_points,
-                        "status": result.status,
-                        "stories_remaining": stories_total - stories_done - 1,
-                    },
-                )
-            else:
-                return PhaseResult(
-                    success=False,
-                    phase_id="dev",
-                    error=result.error or "Failed to implement story",
-                )
 
         except Exception as e:
+            debug_error("bmad.methodology", f"Dev phase failed: {e}")
             logger.error(f"Dev phase failed: {e}")
             return PhaseResult(
                 success=False,
@@ -883,88 +1123,111 @@ class BMADRunner:
             )
 
     def _execute_review(self) -> PhaseResult:
-        """Execute the code review phase.
+        """Execute the code review phase via BMAD code-review workflow.
 
-        Integrates with BMAD code-review workflow for code review.
-        Produces review_report.md artifact.
+        Uses Claude Agent SDK to run the BMAD code-review workflow which
+        performs code review on implemented stories.
 
         Returns:
             PhaseResult with success status and artifacts
 
         Story Reference: Story 6.7 - Implement BMAD Code Review Workflow Integration
         """
-        # Import here to avoid circular imports
-        from apps.backend.methodologies.bmad.workflows.review import (
-            load_review_report,
-            run_code_review,
-        )
+        from apps.backend.agents.session import run_agent_session
+        from apps.backend.core.client import create_client
+        from apps.backend.task_logger import LogPhase
 
-        # Check if output directory is configured
-        if self._output_dir is None:
+        debug_section("bmad.methodology", "REVIEW PHASE - code-review")
+
+        if self._spec_dir is None:
+            debug_error("bmad.methodology", "No spec_dir configured")
             return PhaseResult(
                 success=False,
                 phase_id="review",
-                error="No output directory configured. Set spec_dir in task_config.metadata.",
+                error="No spec_dir configured. Set spec_dir in task_config.metadata.",
             )
 
-        # Check if review report already exists
-        self._invoke_progress_callback("Checking for existing review...", 5.0)
-        existing = load_review_report(self._output_dir)
-        if existing:
-            report_file = self._output_dir / "review_report.md"
-            self._invoke_progress_callback("Found existing review report", 100.0)
+        project_dir = Path(self._project_dir)
+
+        debug(
+            "bmad.methodology",
+            "Phase configuration",
+            project_dir=str(project_dir),
+            spec_dir=str(self._spec_dir),
+        )
+
+        self._invoke_progress_callback("Starting BMAD code-review workflow...", 10.0)
+
+        try:
+            model = (
+                self._task_config.metadata.get("model", self._DEFAULT_AGENT_MODEL)
+                if self._task_config
+                else self._DEFAULT_AGENT_MODEL
+            )
+
+            self._invoke_progress_callback("Creating BMAD agent client...", 20.0)
+            debug(
+                "bmad.methodology",
+                "Creating Claude Agent SDK client",
+                model=model,
+                agent_type="qa_reviewer",
+            )
+            client = create_client(
+                project_dir,
+                self._spec_dir,
+                model=model,
+                agent_type="qa_reviewer",  # Use QA reviewer permissions for code review
+                max_thinking_tokens=None,
+            )
+            debug_success("bmad.methodology", "Client created successfully")
+
+            prompt = "/bmad:bmm:workflows:code-review"
+
+            debug(
+                "bmad.methodology",
+                "Invoking BMAD workflow via slash command",
+                prompt=prompt,
+            )
+
+            self._invoke_progress_callback("Running code-review workflow...", 30.0)
+
+            async def _run_review():
+                debug("bmad.methodology", "Starting agent session...")
+                async with client:
+                    status, response = await run_agent_session(
+                        client,
+                        prompt,
+                        self._spec_dir,
+                        verbose=False,
+                        phase=LogPhase.VALIDATION,
+                    )
+                    debug(
+                        "bmad.methodology",
+                        "Agent session completed",
+                        status=status,
+                        response_length=len(response) if response else 0,
+                    )
+                    return status, response
+
+            status, response = self._run_async(_run_review())
+
+            self._invoke_progress_callback("Code review workflow completed", 100.0)
+
+            debug_success(
+                "bmad.methodology",
+                "REVIEW phase completed",
+                status=status,
+            )
+
             return PhaseResult(
                 success=True,
                 phase_id="review",
-                message="Review report already exists",
-                artifacts=[str(report_file)],
-                metadata={
-                    "project_name": existing.project_name,
-                    "overall_status": existing.overall_status,
-                    "stories_reviewed": existing.stories_reviewed,
-                    "stories_passed": existing.stories_passed,
-                },
+                message="Code review completed via BMAD workflow",
+                metadata={"agent_status": status},
             )
-
-        # Run code review
-        self._invoke_progress_callback("Running code review...", 10.0)
-        try:
-            report = run_code_review(
-                output_dir=self._output_dir,
-                progress_callback=self._invoke_progress_callback,
-            )
-
-            report_file = self._output_dir / "review_report.md"
-            report_json_file = self._output_dir / "review_report.json"
-
-            if report_file.exists():
-                artifacts = [str(report_file), str(report_json_file)]
-
-                return PhaseResult(
-                    success=True,
-                    phase_id="review",
-                    message=f"Code review completed: {report.overall_status}",
-                    artifacts=artifacts,
-                    metadata={
-                        "project_name": report.project_name,
-                        "sprint_id": report.sprint_id,
-                        "overall_status": report.overall_status,
-                        "stories_reviewed": report.stories_reviewed,
-                        "stories_passed": report.stories_passed,
-                        "findings_count": len(report.findings),
-                        "critical_findings": sum(
-                            1 for f in report.findings if f.severity == "critical"
-                        ),
-                    },
-                )
-            else:
-                return PhaseResult(
-                    success=False,
-                    phase_id="review",
-                    error="Code review completed but artifact file was not created",
-                )
 
         except Exception as e:
+            debug_error("bmad.methodology", f"Code review failed: {e}")
             logger.error(f"Code review failed: {e}")
             return PhaseResult(
                 success=False,
@@ -1244,6 +1507,136 @@ class BMADRunner:
         stories_dir = self._output_dir / "stories"
         stories_dir.mkdir(parents=True, exist_ok=True)
         return stories_dir
+
+    # =========================================================================
+    # BMAD Skills Initialization
+    # =========================================================================
+
+    def _init_skills(self) -> None:
+        """Initialize BMAD skills in the target project via symlink.
+
+        Creates a symlink from the target project's `_bmad/` directory to the
+        BMAD skills in the Auto Claude installation. This allows agents running
+        in the target project to access BMAD workflows via slash commands.
+
+        The source `_bmad/` folder is located relative to this methodology file:
+        autonomous-coding/_bmad/
+
+        The symlink is created at:
+        {project_dir}/_bmad/ -> {auto_claude_root}/_bmad/
+
+        Cross-platform handling:
+        - macOS/Linux: Uses relative symlinks for portability
+        - Windows: Uses directory junctions (no admin rights required)
+
+        If symlink creation fails, logs a warning but does not fail the
+        initialization - the methodology will continue but BMAD slash commands
+        may not work.
+        """
+        debug("bmad.methodology", "Initializing BMAD skills symlink...")
+
+        if not self._project_dir:
+            debug_warning("bmad.methodology", "No project_dir configured. BMAD skills will not be linked.")
+            logger.warning("No project_dir configured. BMAD skills will not be linked.")
+            return
+
+        project_dir = Path(self._project_dir)
+
+        # Determine the Auto Claude root directory
+        # This file is at: autonomous-coding/apps/backend/methodologies/bmad/methodology.py
+        # So Auto Claude root is 5 levels up
+        auto_claude_root = Path(__file__).parent.parent.parent.parent.parent
+
+        # Source: _bmad/ folder in Auto Claude
+        source_bmad = auto_claude_root / "_bmad"
+
+        # Target: _bmad/ symlink in target project
+        target_bmad = project_dir / "_bmad"
+
+        debug(
+            "bmad.methodology",
+            "BMAD skills paths",
+            source=str(source_bmad),
+            target=str(target_bmad),
+            source_exists=source_bmad.exists(),
+        )
+
+        # Verify source exists
+        if not source_bmad.exists():
+            debug_warning(
+                "bmad.methodology",
+                f"BMAD skills source not found at {source_bmad}",
+            )
+            logger.warning(
+                f"BMAD skills source not found at {source_bmad}. "
+                "BMAD slash commands may not work."
+            )
+            return
+
+        # Skip if target already exists (don't overwrite)
+        if target_bmad.exists():
+            debug("bmad.methodology", f"BMAD skills already present at {target_bmad}")
+            logger.debug(f"BMAD skills already present at {target_bmad}")
+            return
+
+        # Also skip if target is a symlink (even if broken)
+        if target_bmad.is_symlink():
+            debug("bmad.methodology", f"BMAD skills symlink already exists at {target_bmad} (possibly broken)")
+            logger.debug(f"BMAD skills symlink already exists at {target_bmad} (possibly broken)")
+            return
+
+        try:
+            if sys.platform == "win32":
+                # On Windows, use directory junctions (no admin rights required)
+                # Junctions require absolute paths
+                debug("bmad.methodology", "Creating Windows junction for BMAD skills...")
+                result = subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(target_bmad), str(source_bmad.resolve())],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    raise OSError(result.stderr or "mklink /J failed")
+                debug_success("bmad.methodology", f"Created BMAD skills junction: {target_bmad} -> {source_bmad}")
+                logger.info(f"Created BMAD skills junction: {target_bmad} -> {source_bmad}")
+            else:
+                # On macOS/Linux, use relative symlinks for portability
+                relative_source = os.path.relpath(source_bmad.resolve(), target_bmad.parent)
+                debug("bmad.methodology", f"Creating symlink: {target_bmad} -> {relative_source}")
+                os.symlink(relative_source, target_bmad)
+                debug_success("bmad.methodology", f"Created BMAD skills symlink: {target_bmad} -> {relative_source}")
+                logger.info(f"Created BMAD skills symlink: {target_bmad} -> {relative_source}")
+
+        except OSError as e:
+            # Symlink/junction creation can fail on some systems
+            # Log warning but don't fail - methodology is still usable
+            debug_error(
+                "bmad.methodology",
+                f"Could not create BMAD skills symlink: {e}",
+            )
+            logger.warning(
+                f"Could not create BMAD skills symlink at {target_bmad}: {e}. "
+                "BMAD slash commands may not work in the target project."
+            )
+
+    def _cleanup_skills_symlink(self) -> None:
+        """Remove the BMAD skills symlink from the target project.
+
+        Called during cleanup to remove the symlink created by _init_skills().
+        This is optional - symlinks can be left in place if desired.
+        """
+        if not self._project_dir:
+            return
+
+        target_bmad = Path(self._project_dir) / "_bmad"
+
+        # Only remove if it's a symlink (don't delete actual _bmad folders)
+        if target_bmad.is_symlink():
+            try:
+                target_bmad.unlink()
+                logger.debug(f"Removed BMAD skills symlink: {target_bmad}")
+            except OSError as e:
+                logger.warning(f"Could not remove BMAD skills symlink: {e}")
 
     def _find_phase(self, phase_id: str) -> Phase | None:
         """Find a phase by its ID.

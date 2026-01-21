@@ -349,15 +349,19 @@ class TestBMADRunnerInitialization:
         assert runner._initialized is True
         assert runner._context is mock_context
 
-    def test_initialize_raises_if_already_initialized(self, mock_context: Any) -> None:
-        """Test that initializing twice raises RuntimeError."""
+    def test_initialize_allows_reinitialization(self, mock_context: Any) -> None:
+        """Test that initializing twice resets state for runner reuse."""
         from apps.backend.methodologies.bmad import BMADRunner
 
         runner = BMADRunner()
         runner.initialize(mock_context)
 
-        with pytest.raises(RuntimeError, match="already initialized"):
-            runner.initialize(mock_context)
+        # Should not raise - runners support reuse/reinitialization
+        runner.initialize(mock_context)
+
+        # Runner should still be functional after reinitialization
+        assert runner._initialized is True
+        assert runner._context is mock_context
 
     def test_get_phases_raises_before_initialization(self) -> None:
         """Test that get_phases() raises if not initialized."""

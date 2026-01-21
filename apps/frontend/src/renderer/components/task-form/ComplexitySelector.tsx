@@ -56,11 +56,6 @@ export const ComplexitySelector = memo(function ComplexitySelector({
   const { t } = useTranslation(['tasks']);
   const prefix = idPrefix ? `${idPrefix}-` : '';
 
-  // Find the current option to get its icon and color
-  const currentOption = COMPLEXITY_OPTIONS.find(opt => opt.value === value);
-  const CurrentIcon = currentOption?.icon || Sparkles;
-  const currentColorClass = currentOption?.colorClass || 'text-info';
-
   return (
     <div className="space-y-2">
       <Label
@@ -79,10 +74,7 @@ export const ComplexitySelector = memo(function ComplexitySelector({
           aria-describedby={`${prefix}execution-complexity-help`}
           className="h-10"
         >
-          <div className="flex items-center gap-2">
-            <CurrentIcon className={cn('h-4 w-4', currentColorClass)} />
-            <SelectValue placeholder={t('tasks:executionComplexity.auto.label')} />
-          </div>
+          <SelectValue placeholder={t('tasks:executionComplexity.auto.label')} />
         </SelectTrigger>
         <SelectContent>
           {COMPLEXITY_OPTIONS.map(({ value: optValue, icon: Icon, colorClass }) => (
