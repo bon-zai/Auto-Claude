@@ -526,7 +526,8 @@ describe('E2E Smoke Tests', () => {
       const getTasks = electronAPI['getTasks'] as (projectId: string) => Promise<unknown>;
       const result = await getTasks('project-001');
 
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('task:list', 'project-001');
+      // getTasks passes options as third arg (undefined when not provided)
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('task:list', 'project-001', undefined);
       expect(result).toMatchObject({
         success: true,
         data: expect.arrayContaining([

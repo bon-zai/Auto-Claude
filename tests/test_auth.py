@@ -772,7 +772,8 @@ class TestTokenDecryptionMacOS:
         monkeypatch.setattr("core.auth.is_macos", lambda: True)
         monkeypatch.setattr("core.auth.is_linux", lambda: False)
         monkeypatch.setattr("core.auth.is_windows", lambda: False)
-        monkeypatch.setattr("core.auth.find_executable", lambda name, paths: None)
+        # Mock shutil.which to return None (CLI not found)
+        monkeypatch.setattr("shutil.which", lambda name: None)
 
         from core.auth import decrypt_token
 
@@ -780,16 +781,16 @@ class TestTokenDecryptionMacOS:
             decrypt_token("enc:validbase64data")
 
     def test_macos_decrypt_raises_not_implemented(self, monkeypatch):
-        """Verify macOS decryption raises NotImplementedError with helpful message."""
+        """Verify macOS decryption raises ValueError (wrapping NotImplementedError) with helpful message."""
         monkeypatch.setattr("core.auth.is_macos", lambda: True)
         monkeypatch.setattr("core.auth.is_linux", lambda: False)
         monkeypatch.setattr("core.auth.is_windows", lambda: False)
-        monkeypatch.setattr(
-            "core.auth.find_executable", lambda name, paths: "/usr/local/bin/claude"
-        )
+        # Mock shutil.which to return a path (CLI found)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
 
         from core.auth import decrypt_token
 
+        # NotImplementedError is wrapped in ValueError at the decrypt_token level
         with pytest.raises(ValueError) as exc_info:
             decrypt_token("enc:validbase64data")
 
