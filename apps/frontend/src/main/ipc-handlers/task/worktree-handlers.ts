@@ -2401,6 +2401,17 @@ export function registerWorktreeHandlers(
         let uncommittedFiles: string[] = [];
         if (isGitWorkTree(project.path)) {
           try {
+            // Refresh the git index to ensure accurate status after external commits
+            try {
+              execFileSync(getToolPath('git'), ['update-index', '--refresh'], {
+                cwd: project.path,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe']
+              });
+            } catch {
+              // Ignore refresh errors - it's a best-effort optimization
+            }
+
             const gitStatus = execFileSync(getToolPath('git'), ['status', '--porcelain'], {
               cwd: project.path,
               encoding: 'utf-8'
