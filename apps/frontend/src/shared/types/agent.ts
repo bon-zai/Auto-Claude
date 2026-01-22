@@ -56,6 +56,8 @@ export interface ClaudeUsageSnapshot {
   profileId: string;
   /** Profile name for display */
   profileName: string;
+  /** Email address associated with the profile (from Keychain or profile data) */
+  profileEmail?: string;
   /** When this snapshot was captured */
   fetchedAt: Date;
   /** Which limit is closest to threshold ('session' or 'weekly') */

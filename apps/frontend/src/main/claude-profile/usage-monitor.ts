@@ -157,6 +157,7 @@ export function detectProvider(baseUrl: string): ApiProvider {
 interface ActiveProfileResult {
   profileId: string;
   profileName: string;
+  profileEmail?: string;
   isAPIProfile: boolean;
   baseUrl: string;
   credential?: string;
@@ -492,16 +493,27 @@ export class UsageMonitor extends EventEmitter {
       return null;
     }
 
+    // Get email from profile or try keychain
+    let profileEmail = activeOAuthProfile.email;
+    if (!profileEmail) {
+      // Try to get email from keychain
+      const configDir = activeOAuthProfile.isDefault ? undefined : activeOAuthProfile.configDir;
+      const keychainCreds = getCredentialsFromKeychain(configDir);
+      profileEmail = keychainCreds.email ?? undefined;
+    }
+
     if (this.isDebug) {
       console.warn('[UsageMonitor:TRACE] Active auth type: OAuth Profile', {
         profileId: activeOAuthProfile.id,
-        profileName: activeOAuthProfile.name
+        profileName: activeOAuthProfile.name,
+        profileEmail
       });
     }
 
     return {
       profileId: activeOAuthProfile.id,
       profileName: activeOAuthProfile.name,
+      profileEmail,
       isAPIProfile: false,
       baseUrl: 'https://api.anthropic.com'
     };
@@ -596,8 +608,14 @@ export class UsageMonitor extends EventEmitter {
     credential?: string,
     activeProfile?: ActiveProfileResult
   ): Promise<ClaudeUsageSnapshot | null> {
-    // Get profile name - check both API profiles and OAuth profiles
+    // Get profile name and email - check both API profiles and OAuth profiles
     let profileName: string | undefined;
+    let profileEmail: string | undefined;
+
+    // Use email from activeProfile if available (already fetched from keychain)
+    if (activeProfile?.profileEmail) {
+      profileEmail = activeProfile.profileEmail;
+    }
 
     // First, check if it's an API profile
     try {
@@ -626,10 +644,15 @@ export class UsageMonitor extends EventEmitter {
       const oauthProfile = profileManager.getProfile(profileId);
       if (oauthProfile) {
         profileName = oauthProfile.name;
+        // Get email from OAuth profile if not already set
+        if (!profileEmail) {
+          profileEmail = oauthProfile.email;
+        }
         if (this.isDebug) {
           console.warn('[UsageMonitor:FETCH] Found OAuth profile:', {
             profileId,
-            profileName
+            profileName,
+            profileEmail
           });
         }
       }
@@ -656,7 +679,7 @@ export class UsageMonitor extends EventEmitter {
       if (this.isDebug) {
         console.warn('[UsageMonitor:FETCH] Attempting API fetch method');
       }
-      const apiUsage = await this.fetchUsageViaAPI(credential, profileId, profileName, activeProfile);
+      const apiUsage = await this.fetchUsageViaAPI(credential, profileId, profileName, profileEmail, activeProfile);
       if (apiUsage) {
         console.warn('[UsageMonitor] Successfully fetched via API');
         if (this.isDebug) {
@@ -701,6 +724,7 @@ export class UsageMonitor extends EventEmitter {
    * @param credential - OAuth token or API key
    * @param profileId - Profile identifier
    * @param profileName - Profile display name
+   * @param profileEmail - Optional email associated with the profile
    * @param activeProfile - Optional pre-determined active profile info to avoid race conditions
    * @returns Normalized usage snapshot or null on failure
    */
@@ -708,6 +732,7 @@ export class UsageMonitor extends EventEmitter {
     credential: string,
     profileId: string,
     profileName: string,
+    profileEmail?: string,
     activeProfile?: ActiveProfileResult
   ): Promise<ClaudeUsageSnapshot | null> {
     if (this.isDebug) {
@@ -920,13 +945,13 @@ export class UsageMonitor extends EventEmitter {
 
       switch (provider) {
         case 'anthropic':
-          normalizedUsage = this.normalizeAnthropicResponse(rawData, profileId, profileName);
+          normalizedUsage = this.normalizeAnthropicResponse(rawData, profileId, profileName, profileEmail);
           break;
         case 'zai':
-          normalizedUsage = this.normalizeZAIResponse(responseData, profileId, profileName);
+          normalizedUsage = this.normalizeZAIResponse(responseData, profileId, profileName, profileEmail);
           break;
         case 'zhipu':
-          normalizedUsage = this.normalizeZhipuResponse(responseData, profileId, profileName);
+          normalizedUsage = this.normalizeZhipuResponse(responseData, profileId, profileName, profileEmail);
           break;
         default:
           console.warn('[UsageMonitor] Unsupported provider for usage normalization:', provider);
@@ -983,7 +1008,8 @@ export class UsageMonitor extends EventEmitter {
   private normalizeAnthropicResponse(
     data: any,
     profileId: string,
-    profileName: string
+    profileName: string,
+    profileEmail?: string
   ): ClaudeUsageSnapshot {
     // API returns nested objects with integer percentages (0-100)
     const fiveHourUtil = data.five_hour?.utilization ?? 0;
@@ -999,6 +1025,7 @@ export class UsageMonitor extends EventEmitter {
       weeklyResetTimestamp: data.seven_day?.resets_at,
       profileId,
       profileName,
+      profileEmail,
       fetchedAt: new Date(),
       limitType: sevenDayUtil > fiveHourUtil ? 'weekly' : 'session',
       usageWindows: {
@@ -1017,6 +1044,7 @@ export class UsageMonitor extends EventEmitter {
    * @param data - Raw response data with limits array
    * @param profileId - Profile identifier
    * @param profileName - Profile display name
+   * @param profileEmail - Optional email associated with the profile
    * @param providerName - Provider name for logging ('zai' or 'zhipu')
    * @returns Normalized usage snapshot or null on parse failure
    */
@@ -1024,6 +1052,7 @@ export class UsageMonitor extends EventEmitter {
     data: any,
     profileId: string,
     profileName: string,
+    profileEmail: string | undefined,
     providerName: 'zai' | 'zhipu'
   ): ClaudeUsageSnapshot | null {
     const logPrefix = providerName.toUpperCase();
@@ -1123,6 +1152,7 @@ export class UsageMonitor extends EventEmitter {
         weeklyResetTimestamp,
         profileId,
         profileName,
+        profileEmail,
         fetchedAt: new Date(),
         limitType: weeklyPercent > sessionPercent ? 'weekly' : 'session',
         usageWindows: {
@@ -1171,10 +1201,11 @@ export class UsageMonitor extends EventEmitter {
   private normalizeZAIResponse(
     data: any,
     profileId: string,
-    profileName: string
+    profileName: string,
+    profileEmail?: string
   ): ClaudeUsageSnapshot | null {
     // Delegate to shared quota/limit response normalization
-    return this.normalizeQuotaLimitResponse(data, profileId, profileName, 'zai');
+    return this.normalizeQuotaLimitResponse(data, profileId, profileName, profileEmail, 'zai');
   }
 
   /**
@@ -1188,10 +1219,11 @@ export class UsageMonitor extends EventEmitter {
   private normalizeZhipuResponse(
     data: any,
     profileId: string,
-    profileName: string
+    profileName: string,
+    profileEmail?: string
   ): ClaudeUsageSnapshot | null {
     // Delegate to shared quota/limit response normalization
-    return this.normalizeQuotaLimitResponse(data, profileId, profileName, 'zhipu');
+    return this.normalizeQuotaLimitResponse(data, profileId, profileName, profileEmail, 'zhipu');
   }
 
   /**

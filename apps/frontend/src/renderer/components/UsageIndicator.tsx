@@ -2,11 +2,16 @@
  * Usage Indicator - Real-time Claude usage display in header
  *
  * Displays current session/weekly usage as a badge with color-coded status.
- * Shows detailed breakdown on hover.
+ * Click to show persistent breakdown popup, click outside to dismiss.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Activity, TrendingUp, AlertCircle, Clock, User, ChevronRight, Info } from 'lucide-react';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from './ui/popover';
 import {
   Tooltip,
   TooltipContent,
@@ -16,12 +21,14 @@ import {
 import { useTranslation } from 'react-i18next';
 import { formatTimeRemaining, localizeUsageWindowLabel, hasHardcodedText } from '../../shared/utils/format-time';
 import type { ClaudeUsageSnapshot } from '../../shared/types/agent';
+import type { AppSection } from './settings/AppSettings';
 
 export function UsageIndicator() {
   const { t, i18n } = useTranslation(['common']);
   const [usage, setUsage] = useState<ClaudeUsageSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAvailable, setIsAvailable] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
 
   /**
    * Helper function to format large numbers with locale-aware compact notation
@@ -55,6 +62,19 @@ export function UsageIndicator() {
     }
     return value.toString();
   };
+
+  /**
+   * Navigate to settings integrations tab
+   */
+  const handleOpenIntegrations = useCallback(() => {
+    // Close the popover first
+    setIsOpen(false);
+    // Dispatch custom event to open settings with integrations section
+    const event = new CustomEvent<AppSection>('open-settings', {
+      detail: 'integrations'
+    });
+    window.dispatchEvent(event);
+  }, []);
 
   // Get formatted reset times (calculated dynamically from timestamps)
   // Only fall back to sessionResetTime/weeklyResetTime if they don't contain placeholder/hardcoded text
@@ -162,137 +182,143 @@ export function UsageIndicator() {
     Activity;
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border transition-all hover:opacity-80 ${badgeColorClasses}`}
-            aria-label={t('common:usage.usageStatusAriaLabel')}
-          >
+    <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border transition-all hover:opacity-80 ${badgeColorClasses}`}
+          aria-label={t('common:usage.usageStatusAriaLabel')}
+        >
+          <Icon className="h-3.5 w-3.5" />
+          <span className="text-xs font-semibold font-mono">
+            {Math.round(badgeUsage)}%
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="end" className="text-xs w-72 p-0">
+        <div className="p-3 space-y-3">
+          {/* Header with overall status */}
+          <div className="flex items-center pb-2 border-b">
             <Icon className="h-3.5 w-3.5" />
-            <span className="text-xs font-semibold font-mono">
-              {Math.round(badgeUsage)}%
-            </span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" className="text-xs w-72 p-0">
-          <div className="p-3 space-y-3">
-            {/* Header with overall status */}
-            <div className="flex items-center pb-2 border-b">
-              <Icon className="h-3.5 w-3.5" />
-              <span className="font-semibold text-xs">{t('common:usage.usageBreakdown')}</span>
-            </div>
-
-            {/* Session/5-hour usage */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground font-medium text-[11px] flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  {sessionLabel}
-                </span>
-                <span className={`font-semibold tabular-nums text-xs ${
-                  usage.sessionPercent >= 95 ? 'text-red-500' :
-                  usage.sessionPercent >= 91 ? 'text-orange-500' :
-                  usage.sessionPercent >= 71 ? 'text-yellow-600' :
-                  'text-green-600'
-                }`}>
-                  {Math.round(usage.sessionPercent)}%
-                </span>
-              </div>
-              {sessionResetTime && (
-                <div className="text-[10px] text-muted-foreground pl-4 flex items-center gap-1">
-                  <Info className="h-2.5 w-2.5" />
-                  {sessionResetTime}
-                </div>
-              )}
-              {/* Enhanced progress bar with gradient */}
-              <div className="h-2 bg-muted rounded-full overflow-hidden shadow-inner">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ease-out relative overflow-hidden ${
-                    usage.sessionPercent >= 95 ? 'bg-gradient-to-r from-red-600 to-red-500' :
-                    usage.sessionPercent >= 91 ? 'bg-gradient-to-r from-orange-600 to-orange-500' :
-                    usage.sessionPercent >= 71 ? 'bg-gradient-to-r from-yellow-600 to-yellow-500' :
-                    'bg-gradient-to-r from-green-600 to-green-500'
-                  }`}
-                  style={{ width: `${Math.min(usage.sessionPercent, 100)}%` }}
-                >
-                  {/* Subtle shine effect */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent motion-safe:animate-pulse" />
-                </div>
-              </div>
-              {/* Raw usage value with better styling */}
-              {usage.sessionUsageValue != null && usage.sessionUsageLimit != null && (
-                <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-muted-foreground">{t('common:usage.used')}</span>
-                  <span className="font-medium tabular-nums">
-                    {formatUsageValue(usage.sessionUsageValue)} <span className="text-muted-foreground mx-1">/</span> {formatUsageValue(usage.sessionUsageLimit)}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Weekly/Monthly usage */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground font-medium text-[11px] flex items-center gap-1">
-                  <TrendingUp className="h-3 w-3" />
-                  {weeklyLabel}
-                </span>
-                <span className={`font-semibold tabular-nums text-xs ${
-                  usage.weeklyPercent >= 99 ? 'text-red-500' :
-                  usage.weeklyPercent >= 91 ? 'text-orange-500' :
-                  usage.weeklyPercent >= 71 ? 'text-yellow-600' :
-                  'text-green-600'
-                }`}>
-                  {Math.round(usage.weeklyPercent)}%
-                </span>
-              </div>
-              {weeklyResetTime && (
-                <div className="text-[10px] text-muted-foreground pl-4 flex items-center gap-1">
-                  <Info className="h-2.5 w-2.5" />
-                  {weeklyResetTime}
-                </div>
-              )}
-              {/* Enhanced progress bar with gradient */}
-              <div className="h-2 bg-muted rounded-full overflow-hidden shadow-inner">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ease-out relative overflow-hidden ${
-                    usage.weeklyPercent >= 99 ? 'bg-gradient-to-r from-red-600 to-red-500' :
-                    usage.weeklyPercent >= 91 ? 'bg-gradient-to-r from-orange-600 to-orange-500' :
-                    usage.weeklyPercent >= 71 ? 'bg-gradient-to-r from-yellow-600 to-yellow-500' :
-                    'bg-gradient-to-r from-green-600 to-green-500'
-                  }`}
-                  style={{ width: `${Math.min(usage.weeklyPercent, 100)}%` }}
-                >
-                  {/* Subtle shine effect */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent motion-safe:animate-pulse" />
-                </div>
-              </div>
-              {/* Raw usage value with better styling */}
-              {usage.weeklyUsageValue != null && usage.weeklyUsageLimit != null && (
-                <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-muted-foreground">{t('common:usage.used')}</span>
-                  <span className="font-medium tabular-nums">
-                    {formatUsageValue(usage.weeklyUsageValue)} <span className="text-muted-foreground mx-1">/</span> {formatUsageValue(usage.weeklyUsageLimit)}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Active account footer */}
-            <div className="pt-2 border-t flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <User className="h-3 w-3" />
-                <span>{t('common:usage.activeAccount')}</span>
-              </div>
-              <div className="flex items-center gap-1 text-xs font-medium text-primary">
-                <span>{usage.profileName}</span>
-                <ChevronRight className="h-3 w-3" />
-              </div>
-            </div>
+            <span className="font-semibold text-xs">{t('common:usage.usageBreakdown')}</span>
           </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+
+          {/* Session/5-hour usage */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground font-medium text-[11px] flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                {sessionLabel}
+              </span>
+              <span className={`font-semibold tabular-nums text-xs ${
+                usage.sessionPercent >= 95 ? 'text-red-500' :
+                usage.sessionPercent >= 91 ? 'text-orange-500' :
+                usage.sessionPercent >= 71 ? 'text-yellow-600' :
+                'text-green-600'
+              }`}>
+                {Math.round(usage.sessionPercent)}%
+              </span>
+            </div>
+            {sessionResetTime && (
+              <div className="text-[10px] text-muted-foreground pl-4 flex items-center gap-1">
+                <Info className="h-2.5 w-2.5" />
+                {sessionResetTime}
+              </div>
+            )}
+            {/* Enhanced progress bar with gradient */}
+            <div className="h-2 bg-muted rounded-full overflow-hidden shadow-inner">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out relative overflow-hidden ${
+                  usage.sessionPercent >= 95 ? 'bg-gradient-to-r from-red-600 to-red-500' :
+                  usage.sessionPercent >= 91 ? 'bg-gradient-to-r from-orange-600 to-orange-500' :
+                  usage.sessionPercent >= 71 ? 'bg-gradient-to-r from-yellow-600 to-yellow-500' :
+                  'bg-gradient-to-r from-green-600 to-green-500'
+                }`}
+                style={{ width: `${Math.min(usage.sessionPercent, 100)}%` }}
+              >
+                {/* Subtle shine effect */}
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent motion-safe:animate-pulse" />
+              </div>
+            </div>
+            {/* Raw usage value with better styling */}
+            {usage.sessionUsageValue != null && usage.sessionUsageLimit != null && (
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">{t('common:usage.used')}</span>
+                <span className="font-medium tabular-nums">
+                  {formatUsageValue(usage.sessionUsageValue)} <span className="text-muted-foreground mx-1">/</span> {formatUsageValue(usage.sessionUsageLimit)}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Weekly/Monthly usage */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground font-medium text-[11px] flex items-center gap-1">
+                <TrendingUp className="h-3 w-3" />
+                {weeklyLabel}
+              </span>
+              <span className={`font-semibold tabular-nums text-xs ${
+                usage.weeklyPercent >= 99 ? 'text-red-500' :
+                usage.weeklyPercent >= 91 ? 'text-orange-500' :
+                usage.weeklyPercent >= 71 ? 'text-yellow-600' :
+                'text-green-600'
+              }`}>
+                {Math.round(usage.weeklyPercent)}%
+              </span>
+            </div>
+            {weeklyResetTime && (
+              <div className="text-[10px] text-muted-foreground pl-4 flex items-center gap-1">
+                <Info className="h-2.5 w-2.5" />
+                {weeklyResetTime}
+              </div>
+            )}
+            {/* Enhanced progress bar with gradient */}
+            <div className="h-2 bg-muted rounded-full overflow-hidden shadow-inner">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out relative overflow-hidden ${
+                  usage.weeklyPercent >= 99 ? 'bg-gradient-to-r from-red-600 to-red-500' :
+                  usage.weeklyPercent >= 91 ? 'bg-gradient-to-r from-orange-600 to-orange-500' :
+                  usage.weeklyPercent >= 71 ? 'bg-gradient-to-r from-yellow-600 to-yellow-500' :
+                  'bg-gradient-to-r from-green-600 to-green-500'
+                }`}
+                style={{ width: `${Math.min(usage.weeklyPercent, 100)}%` }}
+              >
+                {/* Subtle shine effect */}
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent motion-safe:animate-pulse" />
+              </div>
+            </div>
+            {/* Raw usage value with better styling */}
+            {usage.weeklyUsageValue != null && usage.weeklyUsageLimit != null && (
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">{t('common:usage.used')}</span>
+                <span className="font-medium tabular-nums">
+                  {formatUsageValue(usage.weeklyUsageValue)} <span className="text-muted-foreground mx-1">/</span> {formatUsageValue(usage.weeklyUsageLimit)}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Active account footer - clickable to go to settings */}
+          <button
+            onClick={handleOpenIntegrations}
+            className="w-full pt-2 border-t flex items-center justify-between hover:bg-muted/50 -mx-3 px-3 -mb-3 pb-3 rounded-b-md transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <User className="h-3 w-3" />
+              <span>{t('common:usage.activeAccount')}</span>
+            </div>
+            <div className="flex items-center gap-1 text-xs">
+              <div className="text-right">
+                <div className="font-medium text-primary">{usage.profileName}</div>
+                {usage.profileEmail && (
+                  <div className="text-[10px] text-muted-foreground">{usage.profileEmail}</div>
+                )}
+              </div>
+              <ChevronRight className="h-3 w-3 text-muted-foreground" />
+            </div>
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
