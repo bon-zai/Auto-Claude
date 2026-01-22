@@ -570,17 +570,6 @@ def _prepare_system_prompt(
         return "", temp_file_path
 
     # Prompt is small enough to pass directly
-    claude_md_info = ""
-    if should_use_claude_md():
-        if claude_md_content:
-            claude_md_info = "included in system prompt"
-        else:
-            claude_md_info = "not found in project root"
-    else:
-        claude_md_info = "disabled by project settings"
-
-    print(f"   - CLAUDE.md: {claude_md_info}")
-
     return base_prompt, None
 
 
