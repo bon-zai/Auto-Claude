@@ -10,11 +10,13 @@
  */
 
 import { EventEmitter } from 'events';
+import { createHash } from 'crypto';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import { ClaudeUsageSnapshot } from '../../shared/types/agent';
 import { loadProfilesFile } from '../services/profile/profile-manager';
 import type { APIProfile } from '../../shared/types/profile';
 import { detectProvider as sharedDetectProvider, type ApiProvider } from '../../shared/utils/provider-detection';
+import { getCredentialsFromKeychain, clearKeychainCache } from './keychain-utils';
 
 // Re-export for backward compatibility
 export type { ApiProvider };
@@ -243,7 +245,12 @@ export class UsageMonitor extends EventEmitter {
    *
    * Priority:
    * 1. API Profile (if active) - returns apiKey directly
-   * 2. OAuth Profile - returns decrypted oauthToken
+   * 2. OAuth Profile - reads FRESH token from Keychain (not cached oauthToken)
+   *
+   * IMPORTANT: For OAuth profiles, we read from Keychain instead of cached profile.oauthToken.
+   * OAuth tokens expire in 8-12 hours, but Claude CLI auto-refreshes and stores fresh tokens
+   * in Keychain. Using cached tokens causes 401 errors after a few hours.
+   * See: docs/LONG_LIVED_AUTH_PLAN.md
    *
    * @returns The credential string or undefined if none available
    */
@@ -269,15 +276,33 @@ export class UsageMonitor extends EventEmitter {
       }
     }
 
-    // Fall back to OAuth profile
+    // Fall back to OAuth profile - read FRESH token from Keychain
     const profileManager = getClaudeProfileManager();
     const activeProfile = profileManager.getActiveProfile();
-    if (activeProfile?.oauthToken) {
-      const decryptedToken = profileManager.getProfileToken(activeProfile.id);
-      if (this.isDebug && decryptedToken) {
-        console.warn('[UsageMonitor:TRACE] Using OAuth profile credential:', activeProfile.name);
+    if (activeProfile) {
+      // Read fresh token from Keychain using configDir (same as CLAUDE_CONFIG_DIR)
+      // This ensures we get the auto-refreshed token, not a stale cached copy
+      const configDir = activeProfile.isDefault ? undefined : activeProfile.configDir;
+      const keychainCreds = getCredentialsFromKeychain(configDir);
+
+      if (keychainCreds.token) {
+        if (this.isDebug) {
+          const tokenHash = createHash('sha256').update(keychainCreds.token).digest('hex').slice(0, 8);
+          console.warn('[UsageMonitor:TRACE] Using OAuth token from Keychain for profile:', activeProfile.name, {
+            tokenHash,
+            tokenPrefix: keychainCreds.token.substring(0, 15) + '...'
+          });
+        }
+        return keychainCreds.token;
       }
-      return decryptedToken;
+
+      // Keychain read failed - log warning (don't fall back to cached token)
+      if (keychainCreds.error) {
+        console.warn('[UsageMonitor] Keychain access failed:', keychainCreds.error);
+      } else if (this.isDebug) {
+        console.warn('[UsageMonitor:TRACE] No token in Keychain for profile:', activeProfile.name,
+          '- user may need to re-authenticate with claude /login');
+      }
     }
 
     // No credential available
@@ -511,6 +536,17 @@ export class UsageMonitor extends EventEmitter {
    */
   private async handleAuthFailure(profileId: string, isAPIProfile: boolean): Promise<void> {
     const profileManager = getClaudeProfileManager();
+
+    // Clear keychain cache for this profile so next attempt gets fresh credentials
+    // This handles cases where the token was refreshed by Claude CLI but our cache is stale
+    if (!isAPIProfile) {
+      const profile = profileManager.getProfile(profileId);
+      if (profile?.configDir) {
+        console.warn('[UsageMonitor] Auth failure - clearing keychain cache for profile:', profileId);
+        clearKeychainCache(profile.configDir);
+      }
+    }
+
     const settings = profileManager.getAutoSwitchSettings();
 
     // Proactive swap is only supported for OAuth profiles, not API profiles
@@ -748,13 +784,23 @@ export class UsageMonitor extends EventEmitter {
       // All providers use Bearer token authentication (RFC 6750)
       const authHeader = `Bearer ${credential}`;
 
+      // Build headers based on provider
+      // Anthropic OAuth requires the 'anthropic-beta: oauth-2025-04-20' header
+      // See: https://codelynx.dev/posts/claude-code-usage-limits-statusline
+      const headers: Record<string, string> = {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json',
+      };
+
+      if (provider === 'anthropic') {
+        // OAuth authentication requires the beta header
+        headers['anthropic-beta'] = 'oauth-2025-04-20';
+        headers['anthropic-version'] = '2023-06-01';
+      }
+
       const response = await fetch(usageEndpoint, {
         method: 'GET',
-        headers: {
-          'Authorization': authHeader,
-          'Content-Type': 'application/json',
-          ...(provider === 'anthropic' && { 'anthropic-version': '2023-06-01' })
-        }
+        headers
       });
 
       if (!response.ok) {
@@ -922,12 +968,16 @@ export class UsageMonitor extends EventEmitter {
   /**
    * Normalize Anthropic API response to ClaudeUsageSnapshot
    *
-   * Expected Anthropic response format:
+   * Actual Anthropic OAuth usage API response format:
    * {
-   *   "five_hour_utilization": 0.72,  // 0.0-1.0
-   *   "seven_day_utilization": 0.45,  // 0.0-1.0
-   *   "five_hour_reset_at": "2025-01-17T15:00:00Z",
-   *   "seven_day_reset_at": "2025-01-20T12:00:00Z"
+   *   "five_hour": {
+   *     "utilization": 19,  // integer 0-100
+   *     "resets_at": "2025-01-17T15:00:00Z"
+   *   },
+   *   "seven_day": {
+   *     "utilization": 45,  // integer 0-100
+   *     "resets_at": "2025-01-20T12:00:00Z"
+   *   }
    * }
    */
   private normalizeAnthropicResponse(
@@ -935,17 +985,18 @@ export class UsageMonitor extends EventEmitter {
     profileId: string,
     profileName: string
   ): ClaudeUsageSnapshot {
-    const fiveHourUtil = data.five_hour_utilization ?? 0;
-    const sevenDayUtil = data.seven_day_utilization ?? 0;
+    // API returns nested objects with integer percentages (0-100)
+    const fiveHourUtil = data.five_hour?.utilization ?? 0;
+    const sevenDayUtil = data.seven_day?.utilization ?? 0;
 
     return {
-      sessionPercent: Math.round(fiveHourUtil * 100),
-      weeklyPercent: Math.round(sevenDayUtil * 100),
+      sessionPercent: fiveHourUtil,  // Already 0-100 integer
+      weeklyPercent: sevenDayUtil,   // Already 0-100 integer
       // Omit sessionResetTime/weeklyResetTime - renderer uses timestamps with formatTimeRemaining
       sessionResetTime: undefined,
       weeklyResetTime: undefined,
-      sessionResetTimestamp: data.five_hour_reset_at,
-      weeklyResetTimestamp: data.seven_day_reset_at,
+      sessionResetTimestamp: data.five_hour?.resets_at,
+      weeklyResetTimestamp: data.seven_day?.resets_at,
       profileId,
       profileName,
       fetchedAt: new Date(),

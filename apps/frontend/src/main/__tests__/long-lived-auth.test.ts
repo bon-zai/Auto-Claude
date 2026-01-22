@@ -1,8 +1,10 @@
 /**
  * Tests for Long-Lived Auth Fix
  *
- * Verifies that getProfileEnv() always uses CLAUDE_CONFIG_DIR
- * instead of cached OAuth tokens (CLAUDE_CODE_OAUTH_TOKEN).
+ * Verifies that:
+ * 1. getProfileEnv() always uses CLAUDE_CONFIG_DIR instead of cached OAuth tokens
+ * 2. Profile migration removes cached oauthToken values
+ * 3. UsageMonitor reads fresh tokens from Keychain
  *
  * See: docs/LONG_LIVED_AUTH_PLAN.md
  */
@@ -26,6 +28,20 @@ vi.mock('../claude-profile-manager', () => ({
 
 // Import after mocking
 import { getProfileEnv } from '../rate-limit-detector';
+
+// Mock for profile storage tests - needs to be imported dynamically
+const mockFs = {
+  existsSync: vi.fn(),
+  readFileSync: vi.fn(),
+  writeFileSync: vi.fn(),
+};
+
+vi.mock('fs', () => ({
+  existsSync: (...args: unknown[]) => mockFs.existsSync(...args),
+  readFileSync: (...args: unknown[]) => mockFs.readFileSync(...args),
+  writeFileSync: (...args: unknown[]) => mockFs.writeFileSync(...args),
+  readFile: vi.fn(),
+}));
 
 describe('Long-Lived Auth Fix', () => {
   beforeEach(() => {
@@ -117,6 +133,75 @@ describe('Long-Lived Auth Fix', () => {
       expect(env).toEqual({
         CLAUDE_CONFIG_DIR: '/Users/test/.claude-profiles/specific',
       });
+    });
+  });
+
+  describe('Profile Storage Migration', () => {
+    it('should remove oauthToken during profile migration', async () => {
+      // Create a profile store with cached oauthToken
+      const storeWithToken = {
+        version: 3,
+        activeProfileId: 'work',
+        profiles: [
+          {
+            id: 'work',
+            name: 'Work Account',
+            isDefault: false,
+            configDir: '/Users/test/.claude-profiles/work',
+            oauthToken: 'enc:stale-cached-token-that-should-be-removed',
+            tokenCreatedAt: '2024-01-01T00:00:00.000Z',
+            createdAt: '2024-01-01T00:00:00.000Z',
+          },
+        ],
+      };
+
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(storeWithToken));
+
+      // Import profile storage dynamically to get fresh module with mocks
+      const { loadProfileStore } = await import('../claude-profile/profile-storage');
+
+      const result = loadProfileStore('/test/path');
+
+      expect(result).not.toBeNull();
+      expect(result?.profiles[0]).toBeDefined();
+
+      // Key assertion: oauthToken and tokenCreatedAt should be removed
+      expect(result?.profiles[0]).not.toHaveProperty('oauthToken');
+      expect(result?.profiles[0]).not.toHaveProperty('tokenCreatedAt');
+
+      // Other properties should be preserved
+      expect(result?.profiles[0].id).toBe('work');
+      expect(result?.profiles[0].name).toBe('Work Account');
+      expect(result?.profiles[0].configDir).toBe('/Users/test/.claude-profiles/work');
+    });
+
+    it('should preserve profiles without oauthToken', async () => {
+      const storeWithoutToken = {
+        version: 3,
+        activeProfileId: 'default',
+        profiles: [
+          {
+            id: 'default',
+            name: 'Default',
+            isDefault: true,
+            configDir: '/Users/test/.claude',
+            createdAt: '2024-01-01T00:00:00.000Z',
+            // No oauthToken - this profile never had one
+          },
+        ],
+      };
+
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(storeWithoutToken));
+
+      const { loadProfileStore } = await import('../claude-profile/profile-storage');
+
+      const result = loadProfileStore('/test/path');
+
+      expect(result).not.toBeNull();
+      expect(result?.profiles[0].id).toBe('default');
+      expect(result?.profiles[0]).not.toHaveProperty('oauthToken');
     });
   });
 });

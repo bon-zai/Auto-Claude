@@ -121,11 +121,23 @@ export function getCredentialsFromKeychain(configDir?: string, forceRefresh = fa
   }
 
   const serviceName = getKeychainServiceName(configDir);
+  const isDebug = process.env.DEBUG === 'true';
 
   // Return cached credentials if available and fresh
   const now = Date.now();
   const cached = keychainCache.get(serviceName);
   if (!forceRefresh && cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+    if (isDebug) {
+      const tokenHash = cached.credentials.token
+        ? createHash('sha256').update(cached.credentials.token).digest('hex').slice(0, 8)
+        : 'null';
+      console.warn('[KeychainUtils:CACHE] Returning cached credentials:', {
+        serviceName,
+        hasToken: !!cached.credentials.token,
+        tokenHash,
+        cacheAge: Math.round((now - cached.timestamp) / 1000) + 's'
+      });
+    }
     return cached.credentials;
   }
 
@@ -214,7 +226,13 @@ export function getCredentialsFromKeychain(configDir?: string, forceRefresh = fa
 
     const credentials = { token: token || null, email };
     keychainCache.set(serviceName, { credentials, timestamp: now });
-    console.debug('[KeychainUtils] Retrieved credentials from Keychain for service:', serviceName, { hasToken: !!token, hasEmail: !!email });
+    const tokenHash = token ? createHash('sha256').update(token).digest('hex').slice(0, 8) : 'null';
+    console.warn('[KeychainUtils] Retrieved credentials from Keychain for service:', serviceName, {
+      hasToken: !!token,
+      hasEmail: !!email,
+      tokenHash,
+      forceRefresh
+    });
     return credentials;
   } catch (error) {
     // Check for exit code 44 (errSecItemNotFound) which indicates item not found
