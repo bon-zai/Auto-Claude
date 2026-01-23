@@ -143,6 +143,10 @@ export function UsageIndicator() {
     e.preventDefault();
     e.stopPropagation();
 
+    // Capture previous state for revert (before any changes)
+    const previousUsage = usage;
+    const previousOtherProfiles = otherProfiles;
+
     // Find the profile we're swapping to
     const targetProfile = otherProfiles.find(p => p.profileId === profileId);
     if (!targetProfile) {
@@ -196,16 +200,16 @@ export function UsageIndicator() {
         window.electronAPI.requestUsageUpdate();
         window.electronAPI.requestAllProfilesUsage?.();
       } else {
-        // Revert optimistic update on failure
+        // Revert to captured previous state
         console.error('[UsageIndicator] Failed to swap profile, reverting');
-        if (usage) setUsage(usage);
-        setOtherProfiles(otherProfiles);
+        if (previousUsage) setUsage(previousUsage);
+        setOtherProfiles(previousOtherProfiles);
       }
     } catch (error) {
       console.error('[UsageIndicator] Failed to swap profile:', error);
-      // Revert optimistic update on error
-      if (usage) setUsage(usage);
-      setOtherProfiles(otherProfiles);
+      // Revert to captured previous state
+      if (previousUsage) setUsage(previousUsage);
+      setOtherProfiles(previousOtherProfiles);
     }
   }, [usage, otherProfiles]);
 

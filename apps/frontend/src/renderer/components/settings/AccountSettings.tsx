@@ -608,7 +608,7 @@ export function AccountSettings({ settings, onSettingsChange, isOpen }: AccountS
         setAutoSwitchSettings(result.data);
       }
     } catch (err) {
-      // Silently handle
+      console.warn('[AccountSettings] Failed to load auto-switch settings:', err);
     } finally {
       setIsLoadingAutoSwitch(false);
     }

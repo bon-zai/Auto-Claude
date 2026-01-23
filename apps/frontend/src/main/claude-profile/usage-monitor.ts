@@ -164,6 +164,15 @@ interface ActiveProfileResult {
   credential?: string;
 }
 
+/**
+ * Type guard to check if an error has an HTTP status code
+ * @param error - The error to check
+ * @returns true if the error has a statusCode property
+ */
+function isHttpError(error: unknown): error is Error & { statusCode?: number } {
+  return error instanceof Error && 'statusCode' in error;
+}
+
 export class UsageMonitor extends EventEmitter {
   private static instance: UsageMonitor;
   private intervalId: NodeJS.Timeout | null = null;
@@ -674,7 +683,7 @@ export class UsageMonitor extends EventEmitter {
       }
     } catch (error) {
       // Step 5: Handle auth failures
-      if ((error as any).statusCode === 401 || (error as any).statusCode === 403) {
+      if (isHttpError(error) && (error.statusCode === 401 || error.statusCode === 403)) {
         if (profileId) {
           await this.handleAuthFailure(profileId, isAPIProfile);
           return; // handleAuthFailure manages its own logging
