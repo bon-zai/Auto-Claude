@@ -19,7 +19,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
-import { Plus, Inbox, Loader2, Eye, CheckCircle2, Archive, RefreshCw, GitPullRequest, X, Settings, ListPlus, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Inbox, Loader2, Eye, CheckCircle2, Archive, RefreshCw, GitPullRequest, X, Settings, ListPlus, ChevronLeft, ChevronRight, Lock, Unlock } from 'lucide-react';
 import { Checkbox } from './ui/checkbox';
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
@@ -91,6 +91,9 @@ interface DroppableColumnProps {
   onResizeStart?: (startX: number) => void;
   onResize?: (width: number) => void;
   onResizeEnd?: () => void;
+  // Lock props
+  isLocked?: boolean;
+  onToggleLocked?: () => void;
 }
 
 /**
@@ -147,6 +150,8 @@ function droppableColumnPropsAreEqual(
   if (prevProps.onResizeStart !== nextProps.onResizeStart) return false;
   if (prevProps.onResize !== nextProps.onResize) return false;
   if (prevProps.onResizeEnd !== nextProps.onResizeEnd) return false;
+  if (prevProps.isLocked !== nextProps.isLocked) return false;
+  if (prevProps.onToggleLocked !== nextProps.onToggleLocked) return false;
 
   // Compare selection props
   const prevSelected = prevProps.selectedTaskIds;
@@ -217,7 +222,7 @@ const getEmptyStateContent = (status: TaskStatus, t: (key: string) => string): {
   }
 };
 
-const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskClick, onStatusChange, isOver, onAddClick, onArchiveAll, onQueueSettings, onQueueAll, maxParallelTasks, archivedCount, showArchived, onToggleArchived, selectedTaskIds, onSelectAll, onDeselectAll, onToggleSelect, isCollapsed, onToggleCollapsed, columnWidth, isResizing, onResizeStart, onResize, onResizeEnd }: DroppableColumnProps) {
+const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskClick, onStatusChange, isOver, onAddClick, onArchiveAll, onQueueSettings, onQueueAll, maxParallelTasks, archivedCount, showArchived, onToggleArchived, selectedTaskIds, onSelectAll, onDeselectAll, onToggleSelect, isCollapsed, onToggleCollapsed, columnWidth, isResizing, onResizeStart, onResize, onResizeEnd, isLocked, onToggleLocked }: DroppableColumnProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const { setNodeRef } = useDroppable({
     id: status
@@ -439,6 +444,31 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
           )}
         </div>
         <div className="flex items-center gap-1">
+          {/* Lock toggle button - available for all columns */}
+          {onToggleLocked && (
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    'h-7 w-7 transition-colors',
+                    isLocked
+                      ? 'text-amber-500 bg-amber-500/10 hover:bg-amber-500/20'
+                      : 'hover:bg-muted-foreground/10 hover:text-muted-foreground'
+                  )}
+                  onClick={onToggleLocked}
+                  aria-pressed={isLocked}
+                  aria-label={isLocked ? t('kanban.unlockColumn') : t('kanban.lockColumn')}
+                >
+                  {isLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {isLocked ? t('kanban.unlockColumn') : t('kanban.lockColumn')}
+              </TooltipContent>
+            </Tooltip>
+          )}
           {status === 'backlog' && (
             <>
               {onQueueAll && tasks.length > 0 && (
@@ -566,21 +596,28 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
       {onResizeStart && onResize && onResizeEnd && (
         <div
           className={cn(
-            "absolute right-0 top-0 bottom-0 w-1 cursor-col-resize touch-none z-10",
+            "absolute right-0 top-0 bottom-0 w-1 touch-none z-10",
             "transition-colors duration-150",
-            "hover:bg-primary/40",
-            isResizing && "bg-primary/60"
+            isLocked
+              ? "cursor-not-allowed bg-amber-500/20 hover:bg-amber-500/30"
+              : "cursor-col-resize hover:bg-primary/40",
+            isResizing && !isLocked && "bg-primary/60"
           )}
           onMouseDown={(e) => {
             e.preventDefault();
+            // Don't start resize if column is locked
+            if (isLocked) return;
             onResizeStart(e.clientX);
           }}
           onTouchStart={(e) => {
             e.preventDefault();
+            // Don't start resize if column is locked
+            if (isLocked) return;
             if (e.touches.length > 0) {
               onResizeStart(e.touches[0].clientX);
             }
           }}
+          title={isLocked ? t('kanban.columnLocked') : undefined}
         >
           {/* Wider invisible hit area for easier grabbing */}
           <div className="absolute inset-y-0 -left-1 -right-1" />
@@ -600,12 +637,13 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
   // Project store for queue settings
   const projects = useProjectStore((state) => state.projects);
 
-  // Kanban settings store for column preferences (collapse state, width)
+  // Kanban settings store for column preferences (collapse state, width, lock state)
   const columnPreferences = useKanbanSettingsStore((state) => state.columnPreferences);
   const loadKanbanPreferences = useKanbanSettingsStore((state) => state.loadPreferences);
   const saveKanbanPreferences = useKanbanSettingsStore((state) => state.savePreferences);
   const toggleColumnCollapsed = useKanbanSettingsStore((state) => state.toggleColumnCollapsed);
   const setColumnWidth = useKanbanSettingsStore((state) => state.setColumnWidth);
+  const toggleColumnLocked = useKanbanSettingsStore((state) => state.toggleColumnLocked);
 
   // Column resize state
   const [resizingColumn, setResizingColumn] = useState<typeof TASK_STATUS_COLUMNS[number] | null>(null);
@@ -1081,6 +1119,18 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     }
   }, [toggleColumnCollapsed, saveKanbanPreferences, projectId]);
 
+  // Create a callback to toggle locked state and save to storage
+  const handleToggleColumnLocked = useCallback((status: typeof TASK_STATUS_COLUMNS[number]) => {
+    toggleColumnLocked(status);
+    // Save preferences after toggling
+    if (projectId) {
+      // Use setTimeout to ensure state is updated before saving
+      setTimeout(() => {
+        saveKanbanPreferences(projectId);
+      }, 0);
+    }
+  }, [toggleColumnLocked, saveKanbanPreferences, projectId]);
+
   // Resize handlers for column width adjustment
   const handleResizeStart = useCallback((status: typeof TASK_STATUS_COLUMNS[number], startX: number) => {
     const currentWidth = columnPreferences?.[status]?.width ?? DEFAULT_COLUMN_WIDTH;
@@ -1352,6 +1402,8 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
               onResizeStart={(startX) => handleResizeStart(status, startX)}
               onResize={(width) => setColumnWidth(status, width)}
               onResizeEnd={handleResizeEnd}
+              isLocked={columnPreferences?.[status]?.isLocked}
+              onToggleLocked={() => handleToggleColumnLocked(status)}
             />
           ))}
         </div>
