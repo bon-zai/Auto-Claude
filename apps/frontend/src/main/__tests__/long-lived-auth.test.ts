@@ -16,6 +16,8 @@ const mockGetProfile = vi.fn();
 const mockGetActiveProfile = vi.fn();
 const mockGetProfileToken = vi.fn();
 const mockGetActiveProfileToken = vi.fn();
+const mockGetProfileEnv = vi.fn();
+const mockGetActiveProfileEnv = vi.fn();
 
 vi.mock('../claude-profile-manager', () => ({
   getClaudeProfileManager: () => ({
@@ -23,6 +25,8 @@ vi.mock('../claude-profile-manager', () => ({
     getActiveProfile: mockGetActiveProfile,
     getProfileToken: mockGetProfileToken,
     getActiveProfileToken: mockGetActiveProfileToken,
+    getProfileEnv: mockGetProfileEnv,
+    getActiveProfileEnv: mockGetActiveProfileEnv,
   }),
 }));
 
@@ -50,29 +54,22 @@ describe('Long-Lived Auth Fix', () => {
 
   describe('getProfileEnv', () => {
     it('should return empty env for default profile (Claude CLI uses ~/.claude)', () => {
-      mockGetActiveProfile.mockReturnValue({
-        id: 'default',
-        name: 'Default',
-        isDefault: true,
-        configDir: '/Users/test/.claude',
-        oauthToken: 'enc:some-encrypted-token', // Even with token, should use default
-      });
+      // Since getProfileEnv now delegates to profile manager, mock the manager's method
+      mockGetActiveProfileEnv.mockReturnValue({});
 
       const env = getProfileEnv();
 
       expect(env).toEqual({});
+      expect(mockGetActiveProfileEnv).toHaveBeenCalled();
       // Should NOT call getProfileToken or getActiveProfileToken
       expect(mockGetProfileToken).not.toHaveBeenCalled();
       expect(mockGetActiveProfileToken).not.toHaveBeenCalled();
     });
 
     it('should return CLAUDE_CONFIG_DIR for non-default profile with configDir', () => {
-      mockGetActiveProfile.mockReturnValue({
-        id: 'work-profile',
-        name: 'Work',
-        isDefault: false,
-        configDir: '/Users/test/.claude-profiles/work',
-        oauthToken: 'enc:some-encrypted-token', // Should be IGNORED
+      // Since getProfileEnv now delegates to profile manager, mock the manager's method
+      mockGetActiveProfileEnv.mockReturnValue({
+        CLAUDE_CONFIG_DIR: '/Users/test/.claude-profiles/work',
       });
 
       const env = getProfileEnv();
@@ -80,19 +77,17 @@ describe('Long-Lived Auth Fix', () => {
       expect(env).toEqual({
         CLAUDE_CONFIG_DIR: '/Users/test/.claude-profiles/work',
       });
+      expect(mockGetActiveProfileEnv).toHaveBeenCalled();
       // Should NOT use the cached token - this is the key fix!
       expect(mockGetProfileToken).not.toHaveBeenCalled();
       expect(mockGetActiveProfileToken).not.toHaveBeenCalled();
     });
 
     it('should NOT return CLAUDE_CODE_OAUTH_TOKEN even when profile has oauthToken', () => {
-      mockGetActiveProfile.mockReturnValue({
-        id: 'personal-profile',
-        name: 'Personal',
-        isDefault: false,
-        configDir: '/Users/test/.claude-profiles/personal',
-        oauthToken: 'enc:stale-cached-token-that-would-cause-401',
-        tokenCreatedAt: new Date('2024-01-01'), // Old token
+      // Since getProfileEnv now delegates to profile manager, mock the manager's method
+      // The profile manager's implementation should never include CLAUDE_CODE_OAUTH_TOKEN
+      mockGetActiveProfileEnv.mockReturnValue({
+        CLAUDE_CONFIG_DIR: '/Users/test/.claude-profiles/personal',
       });
 
       const env = getProfileEnv();
@@ -103,13 +98,9 @@ describe('Long-Lived Auth Fix', () => {
     });
 
     it('should return empty env for profile without configDir (edge case)', () => {
-      mockGetActiveProfile.mockReturnValue({
-        id: 'broken-profile',
-        name: 'Broken',
-        isDefault: false,
-        configDir: undefined, // No configDir configured
-        oauthToken: 'enc:token-without-configdir',
-      });
+      // Since getProfileEnv now delegates to profile manager, mock the manager's method
+      // Profile manager returns empty env when no configDir is set
+      mockGetActiveProfileEnv.mockReturnValue({});
 
       const env = getProfileEnv();
 
@@ -120,16 +111,14 @@ describe('Long-Lived Auth Fix', () => {
     });
 
     it('should use specific profile when profileId is provided', () => {
-      mockGetProfile.mockReturnValue({
-        id: 'specific-profile',
-        name: 'Specific',
-        isDefault: false,
-        configDir: '/Users/test/.claude-profiles/specific',
+      // Since getProfileEnv now delegates to profile manager, mock the manager's method
+      mockGetProfileEnv.mockReturnValue({
+        CLAUDE_CONFIG_DIR: '/Users/test/.claude-profiles/specific',
       });
 
       const env = getProfileEnv('specific-profile');
 
-      expect(mockGetProfile).toHaveBeenCalledWith('specific-profile');
+      expect(mockGetProfileEnv).toHaveBeenCalledWith('specific-profile');
       expect(env).toEqual({
         CLAUDE_CONFIG_DIR: '/Users/test/.claude-profiles/specific',
       });
