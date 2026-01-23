@@ -265,43 +265,18 @@ export function isAuthFailureError(output: string): boolean {
  * which includes any refreshed tokens. This solves the 401 errors after a few hours.
  *
  * See: docs/LONG_LIVED_AUTH_PLAN.md for full context.
+ *
+ * @param profileId - Optional profile ID. If not provided, uses active profile.
+ * @returns Environment variables for Claude CLI invocation
  */
 export function getProfileEnv(profileId?: string): Record<string, string> {
   const profileManager = getClaudeProfileManager();
-  const profile = profileId
-    ? profileManager.getProfile(profileId)
-    : profileManager.getActiveProfile();
 
-  console.warn('[getProfileEnv] Active profile:', {
-    profileId: profile?.id,
-    profileName: profile?.name,
-    email: profile?.email,
-    isDefault: profile?.isDefault,
-    configDir: profile?.configDir
-  });
-
-  if (!profile) {
-    console.warn('[getProfileEnv] No profile found, using defaults');
-    return {};
+  // Delegate to profile manager's implementation to avoid code duplication
+  if (profileId) {
+    return profileManager.getProfileEnv(profileId);
   }
-
-  // Default profile uses ~/.claude implicitly (no env var needed)
-  if (profile.isDefault) {
-    console.warn('[getProfileEnv] Using default profile (Claude CLI uses ~/.claude)');
-    return {};
-  }
-
-  // Non-default profiles: use CLAUDE_CONFIG_DIR to point Claude CLI to profile's config
-  // Claude CLI will read fresh tokens from Keychain, benefiting from auto-refresh
-  if (profile.configDir) {
-    console.warn('[getProfileEnv] Using CLAUDE_CONFIG_DIR for profile:', profile.name, profile.configDir);
-    return {
-      CLAUDE_CONFIG_DIR: profile.configDir
-    };
-  }
-
-  console.warn('[getProfileEnv] Profile has no configDir configured - cannot authenticate');
-  return {};
+  return profileManager.getActiveProfileEnv();
 }
 
 /**

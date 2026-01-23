@@ -326,7 +326,11 @@ export function AccountSettings({ settings, onSettingsChange, isOpen }: AccountS
             profileName,
           });
         } else {
-          alert(t('accounts.alerts.profileCreatedAuthFailed', { error: authResult.error || t('accounts.toast.tryAgain') }));
+          toast({
+            variant: 'destructive',
+            title: t('accounts.toast.authFailed'),
+            description: authResult.error || t('accounts.toast.tryAgain'),
+          });
         }
       }
     } catch (err) {
@@ -442,7 +446,11 @@ export function AccountSettings({ settings, onSettingsChange, isOpen }: AccountS
     try {
       const result = await window.electronAPI.authenticateClaudeProfile(profileId);
       if (!result.success || !result.data) {
-        alert(t('accounts.alerts.authPrepareFailed', { error: result.error || t('accounts.toast.tryAgain') }));
+        toast({
+          variant: 'destructive',
+          title: t('accounts.toast.authFailed'),
+          description: result.error || t('accounts.toast.tryAgain'),
+        });
         setAuthenticatingProfileId(null);
         return;
       }
@@ -455,7 +463,11 @@ export function AccountSettings({ settings, onSettingsChange, isOpen }: AccountS
       });
     } catch (err) {
       console.error('Failed to authenticate profile:', err);
-      alert(t('accounts.alerts.authStartFailedMessage'));
+      toast({
+        variant: 'destructive',
+        title: t('accounts.toast.authFailed'),
+        description: t('accounts.toast.tryAgain'),
+      });
       setAuthenticatingProfileId(null);
     }
   };
@@ -1240,10 +1252,11 @@ export function AccountSettings({ settings, onSettingsChange, isOpen }: AccountS
                         {/* Session threshold */}
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <Label className="text-sm">{t('accounts.autoSwitching.sessionThreshold')}</Label>
+                            <Label htmlFor="session-threshold" className="text-sm">{t('accounts.autoSwitching.sessionThreshold')}</Label>
                             <span className="text-sm font-mono">{autoSwitchSettings?.sessionThreshold ?? 95}%</span>
                           </div>
                           <input
+                            id="session-threshold"
                             type="range"
                             min="70"
                             max="99"
@@ -1252,8 +1265,9 @@ export function AccountSettings({ settings, onSettingsChange, isOpen }: AccountS
                             onChange={(e) => handleUpdateAutoSwitch({ sessionThreshold: parseInt(e.target.value) })}
                             disabled={isLoadingAutoSwitch}
                             className="w-full"
+                            aria-describedby="session-threshold-description"
                           />
-                          <p className="text-xs text-muted-foreground">
+                          <p id="session-threshold-description" className="text-xs text-muted-foreground">
                             {t('accounts.autoSwitching.sessionThresholdDescription')}
                           </p>
                         </div>
@@ -1261,10 +1275,11 @@ export function AccountSettings({ settings, onSettingsChange, isOpen }: AccountS
                         {/* Weekly threshold */}
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <Label className="text-sm">{t('accounts.autoSwitching.weeklyThreshold')}</Label>
+                            <Label htmlFor="weekly-threshold" className="text-sm">{t('accounts.autoSwitching.weeklyThreshold')}</Label>
                             <span className="text-sm font-mono">{autoSwitchSettings?.weeklyThreshold ?? 99}%</span>
                           </div>
                           <input
+                            id="weekly-threshold"
                             type="range"
                             min="70"
                             max="99"
@@ -1273,8 +1288,9 @@ export function AccountSettings({ settings, onSettingsChange, isOpen }: AccountS
                             onChange={(e) => handleUpdateAutoSwitch({ weeklyThreshold: parseInt(e.target.value) })}
                             disabled={isLoadingAutoSwitch}
                             className="w-full"
+                            aria-describedby="weekly-threshold-description"
                           />
-                          <p className="text-xs text-muted-foreground">
+                          <p id="weekly-threshold-description" className="text-xs text-muted-foreground">
                             {t('accounts.autoSwitching.weeklyThresholdDescription')}
                           </p>
                         </div>

@@ -10,6 +10,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { homedir } from 'os';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import { ClaudeUsageSnapshot, ProfileUsageSummary, AllProfilesUsage } from '../../shared/types/agent';
 import { loadProfilesFile } from '../services/profile/profile-manager';
@@ -297,6 +298,8 @@ export class UsageMonitor extends EventEmitter {
   /**
    * Get all profiles usage data (for multi-profile display in UI)
    * Returns cached data if fresh, otherwise fetches for all profiles
+   *
+   * Uses parallel fetching for inactive profiles to minimize blocking delays.
    */
   async getAllProfilesUsage(): Promise<AllProfilesUsage | null> {
     const profileManager = getClaudeProfileManager();
@@ -307,70 +310,95 @@ export class UsageMonitor extends EventEmitter {
       return null;
     }
 
-    // Build the all profiles list
+    const now = Date.now();
     const allProfiles: ProfileUsageSummary[] = [];
 
-    for (const profile of settings.profiles) {
+    // First pass: identify profiles that need fresh data vs cached
+    type ProfileToFetch = { profile: typeof settings.profiles[0]; index: number };
+    const profilesToFetch: ProfileToFetch[] = [];
+    const profileResults: (ProfileUsageSummary | null)[] = new Array(settings.profiles.length).fill(null);
+
+    for (let i = 0; i < settings.profiles.length; i++) {
+      const profile = settings.profiles[i];
       const cached = this.allProfilesUsageCache.get(profile.id);
-      const now = Date.now();
 
       // Use cached data if fresh (within TTL)
       if (cached && (now - cached.fetchedAt) < UsageMonitor.PROFILE_USAGE_CACHE_TTL_MS) {
-        allProfiles.push({
+        profileResults[i] = {
           ...cached.usage,
           isActive: profile.id === activeProfileId
-        });
+        };
         continue;
       }
 
       // For active profile, use the current detailed usage
       if (profile.id === activeProfileId && this.currentUsage) {
         const summary = this.buildProfileUsageSummary(profile, this.currentUsage);
-        allProfiles.push(summary);
+        profileResults[i] = summary;
         this.allProfilesUsageCache.set(profile.id, { usage: summary, fetchedAt: now });
         continue;
       }
 
-      // For inactive profiles, fetch real usage from API using their credentials
-      const inactiveUsage = await this.fetchUsageForInactiveProfile(profile);
-      const rateLimitStatus = isProfileRateLimited(profile);
+      // Mark for parallel fetch
+      profilesToFetch.push({ profile, index: i });
+    }
 
-      let sessionPercent = 0;
-      let weeklyPercent = 0;
+    // Parallel fetch for all inactive profiles that need fresh data
+    if (profilesToFetch.length > 0) {
+      const fetchPromises = profilesToFetch.map(async ({ profile, index }) => {
+        const inactiveUsage = await this.fetchUsageForInactiveProfile(profile);
+        const rateLimitStatus = isProfileRateLimited(profile);
 
-      if (inactiveUsage) {
-        sessionPercent = inactiveUsage.sessionPercent;
-        weeklyPercent = inactiveUsage.weeklyPercent;
-        // Save to profile for persistence
-        profileManager.updateProfileUsageFromAPI(profile.id, sessionPercent, weeklyPercent);
-      } else {
-        // Fallback to cached profile data if API fetch failed
-        sessionPercent = profile.usage?.sessionUsagePercent ?? 0;
-        weeklyPercent = profile.usage?.weeklyUsagePercent ?? 0;
-      }
+        let sessionPercent = 0;
+        let weeklyPercent = 0;
 
-      const summary: ProfileUsageSummary = {
-        profileId: profile.id,
-        profileName: profile.name,
-        profileEmail: profile.email,
-        sessionPercent,
-        weeklyPercent,
-        isAuthenticated: profile.isAuthenticated ?? false,
-        isRateLimited: rateLimitStatus.limited,
-        rateLimitType: rateLimitStatus.type,
-        availabilityScore: this.calculateAvailabilityScore(
+        if (inactiveUsage) {
+          sessionPercent = inactiveUsage.sessionPercent;
+          weeklyPercent = inactiveUsage.weeklyPercent;
+          // Save to profile for persistence
+          profileManager.updateProfileUsageFromAPI(profile.id, sessionPercent, weeklyPercent);
+        } else {
+          // Fallback to cached profile data if API fetch failed
+          sessionPercent = profile.usage?.sessionUsagePercent ?? 0;
+          weeklyPercent = profile.usage?.weeklyUsagePercent ?? 0;
+        }
+
+        const summary: ProfileUsageSummary = {
+          profileId: profile.id,
+          profileName: profile.name,
+          profileEmail: profile.email,
           sessionPercent,
           weeklyPercent,
-          rateLimitStatus.limited,
-          rateLimitStatus.type,
-          profile.isAuthenticated ?? false
-        ),
-        isActive: profile.id === activeProfileId,
-        lastFetchedAt: inactiveUsage?.fetchedAt?.toISOString() ?? profile.usage?.lastUpdated?.toISOString()
-      };
+          isAuthenticated: profile.isAuthenticated ?? false,
+          isRateLimited: rateLimitStatus.limited,
+          rateLimitType: rateLimitStatus.type,
+          availabilityScore: this.calculateAvailabilityScore(
+            sessionPercent,
+            weeklyPercent,
+            rateLimitStatus.limited,
+            rateLimitStatus.type,
+            profile.isAuthenticated ?? false
+          ),
+          isActive: profile.id === activeProfileId,
+          lastFetchedAt: inactiveUsage?.fetchedAt?.toISOString() ?? profile.usage?.lastUpdated?.toISOString()
+        };
 
-      allProfiles.push(summary);
-      this.allProfilesUsageCache.set(profile.id, { usage: summary, fetchedAt: now });
+        this.allProfilesUsageCache.set(profile.id, { usage: summary, fetchedAt: now });
+        return { index, summary };
+      });
+
+      // Wait for all fetches to complete in parallel
+      const fetchResults = await Promise.all(fetchPromises);
+      for (const { index, summary } of fetchResults) {
+        profileResults[index] = summary;
+      }
+    }
+
+    // Collect non-null results
+    for (const result of profileResults) {
+      if (result) {
+        allProfiles.push(result);
+      }
     }
 
     // Sort by availability score (highest first = most available)
@@ -406,7 +434,7 @@ export class UsageMonitor extends EventEmitter {
     try {
       // Get credentials from keychain for this profile's configDir
       const expandedConfigDir = profile.configDir.startsWith('~')
-        ? profile.configDir.replace(/^~/, require('os').homedir())
+        ? profile.configDir.replace(/^~/, homedir())
         : profile.configDir;
 
       const keychainCreds = getCredentialsFromKeychain(expandedConfigDir);
@@ -1716,10 +1744,6 @@ export class UsageMonitor extends EventEmitter {
     } else {
       // Switch API profile via profile-manager service
       try {
-        const profilesFile = await loadProfilesFile();
-        profilesFile.activeProfileId = bestAccount.id;
-        // Note: We need to save this. Import the setActiveAPIProfile function.
-        // For now, emit an event to let the UI handle it since there's no direct save function here
         const { setActiveAPIProfile } = await import('../services/profile/profile-manager');
         await setActiveAPIProfile(bestAccount.id);
       } catch (error) {
