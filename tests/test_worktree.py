@@ -136,6 +136,40 @@ class TestWorktreeCreation:
         assert (info2.path / "test-file.txt").exists()
         assert (info2.path / "test-file.txt").read_text() == "test content"
 
+    def test_create_worktree_branch_exists_no_worktree(self, temp_git_repo: Path):
+        """create_worktree reuses existing branch when worktree is missing."""
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+
+        # Create initial worktree
+        info1 = manager.create_worktree("test-spec")
+        branch_name = info1.branch
+        assert info1.path.exists()
+        assert branch_name == "auto-claude/test-spec"
+
+        # Remove worktree but keep the branch (delete_branch=False is default)
+        manager.remove_worktree("test-spec", delete_branch=False)
+
+        # Verify worktree directory is gone
+        assert not info1.path.exists()
+
+        # Verify branch still exists
+        result = subprocess.run(
+            ["git", "branch", "--list", branch_name],
+            cwd=temp_git_repo, capture_output=True, text=True
+        )
+        assert branch_name in result.stdout, "Branch should still exist after worktree removal"
+
+        # Create worktree again - should succeed by reusing existing branch
+        info2 = manager.create_worktree("test-spec")
+
+        # Should return valid worktree info with the same branch
+        assert info2.path.exists()
+        assert info2.branch == branch_name
+        assert info2.is_active is True
+        # README should exist (copied from base branch)
+        assert (info2.path / "README.md").exists()
+
 
 class TestWorktreeRemoval:
     """Tests for removing worktrees."""
