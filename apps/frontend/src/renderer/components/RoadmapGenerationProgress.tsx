@@ -199,6 +199,9 @@ function formatTime(seconds: number): string {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
+// Stall detection threshold in seconds
+const STALL_THRESHOLD_SECONDS = 15;
+
 export function RoadmapGenerationProgress({
   generationStatus,
   className,
@@ -209,6 +212,8 @@ export function RoadmapGenerationProgress({
   const [isStopping, setIsStopping] = useState(false);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [lastProgressChange, setLastProgressChange] = useState<number>(Date.now());
+  const [isStalled, setIsStalled] = useState(false);
 
   // Track elapsed time for active phases
   useEffect(() => {
@@ -218,11 +223,37 @@ export function RoadmapGenerationProgress({
       // Start tracking time when entering an active phase
       setStartTime(Date.now());
       setElapsedSeconds(0);
+      // Reset stall detection when starting
+      setLastProgressChange(Date.now());
+      setIsStalled(false);
     } else if (!isActivePhase) {
       // Reset when generation ends
       setStartTime(null);
+      setIsStalled(false);
     }
   }, [phase, startTime]);
+
+  // Track when progress, phase, or message changes to reset stall detection
+  useEffect(() => {
+    const isActivePhase = phase !== 'idle' && phase !== 'complete' && phase !== 'error';
+    if (isActivePhase) {
+      setLastProgressChange(Date.now());
+      setIsStalled(false);
+    }
+  }, [phase, progress, message]);
+
+  // Check for stall condition every second
+  useEffect(() => {
+    const isActivePhase = phase !== 'idle' && phase !== 'complete' && phase !== 'error';
+    if (!isActivePhase) return;
+
+    const interval = setInterval(() => {
+      const secondsSinceChange = (Date.now() - lastProgressChange) / 1000;
+      setIsStalled(secondsSinceChange > STALL_THRESHOLD_SECONDS);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [phase, lastProgressChange]);
 
   // Update elapsed seconds every second
   useEffect(() => {
@@ -396,6 +427,26 @@ export function RoadmapGenerationProgress({
               Elapsed: {formatTime(elapsedSeconds)}
             </span>
           </div>
+          {/* Stall detection indicator */}
+          <AnimatePresence>
+            {isStalled && (
+              <motion.div
+                className="flex justify-center"
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+                transition={{ duration: 0.2 }}
+              >
+                <motion.span
+                  className="text-xs text-amber-500 font-medium"
+                  animate={reducedMotion ? {} : { opacity: [1, 0.5, 1] }}
+                  transition={reducedMotion ? {} : { duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                >
+                  Still working...
+                </motion.span>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
 
