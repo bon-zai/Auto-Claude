@@ -190,6 +190,15 @@ function PhaseStepsIndicator({
  * Displays the current generation phase with animated transitions,
  * progress visualization, and step indicators.
  */
+/**
+ * Formats elapsed seconds as M:SS or MM:SS
+ */
+function formatTime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
+}
+
 export function RoadmapGenerationProgress({
   generationStatus,
   className,
@@ -198,6 +207,33 @@ export function RoadmapGenerationProgress({
   const { phase, progress, message, error } = generationStatus;
   const reducedMotion = useReducedMotion();
   const [isStopping, setIsStopping] = useState(false);
+  const [startTime, setStartTime] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Track elapsed time for active phases
+  useEffect(() => {
+    const isActivePhase = phase !== 'idle' && phase !== 'complete' && phase !== 'error';
+
+    if (isActivePhase && startTime === null) {
+      // Start tracking time when entering an active phase
+      setStartTime(Date.now());
+      setElapsedSeconds(0);
+    } else if (!isActivePhase) {
+      // Reset when generation ends
+      setStartTime(null);
+    }
+  }, [phase, startTime]);
+
+  // Update elapsed seconds every second
+  useEffect(() => {
+    if (startTime === null) return;
+
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [startTime]);
 
   /**
    * Handle stop button click with error handling and double-click prevention
@@ -353,6 +389,12 @@ export function RoadmapGenerationProgress({
                 transition={indeterminateTransition}
               />
             )}
+          </div>
+          {/* Elapsed time display */}
+          <div className="flex justify-center">
+            <span className="text-xs text-muted-foreground">
+              Elapsed: {formatTime(elapsedSeconds)}
+            </span>
           </div>
         </div>
       )}
