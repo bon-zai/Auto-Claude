@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Users, Sparkles, CheckCircle2, AlertCircle, Square } from 'lucide-react';
 import { Button } from './ui/button';
@@ -207,6 +208,7 @@ export function RoadmapGenerationProgress({
   className,
   onStop
 }: RoadmapGenerationProgressProps) {
+  const { t } = useTranslation(['common']);
   const { phase, progress, message, error } = generationStatus;
   const reducedMotion = useReducedMotion();
   const [isStopping, setIsStopping] = useState(false);
@@ -424,7 +426,7 @@ export function RoadmapGenerationProgress({
           {/* Elapsed time display */}
           <div className="flex justify-center">
             <span className="text-xs text-muted-foreground">
-              Elapsed: {formatTime(elapsedSeconds)}
+              {t('common:roadmapGeneration.elapsed', { time: formatTime(elapsedSeconds) })}
             </span>
           </div>
           {/* Stall detection indicator */}
@@ -442,7 +444,7 @@ export function RoadmapGenerationProgress({
                   animate={reducedMotion ? {} : { opacity: [1, 0.5, 1] }}
                   transition={reducedMotion ? {} : { duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
                 >
-                  Still working...
+                  {t('common:roadmapGeneration.stillWorking')}
                 </motion.span>
               </motion.div>
             )}
