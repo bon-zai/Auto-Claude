@@ -19,7 +19,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
-import { Plus, Inbox, Loader2, Eye, CheckCircle2, Archive, RefreshCw, GitPullRequest, X, Settings, ListPlus } from 'lucide-react';
+import { Plus, Inbox, Loader2, Eye, CheckCircle2, Archive, RefreshCw, GitPullRequest, X, Settings, ListPlus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Checkbox } from './ui/checkbox';
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
@@ -31,7 +31,7 @@ import { TASK_STATUS_COLUMNS, TASK_STATUS_LABELS } from '../../shared/constants'
 import { cn } from '../lib/utils';
 import { persistTaskStatus, forceCompleteTask, archiveTasks, useTaskStore } from '../stores/task-store';
 import { updateProjectSettings, useProjectStore } from '../stores/project-store';
-import { useKanbanSettingsStore } from '../stores/kanban-settings-store';
+import { useKanbanSettingsStore, COLLAPSED_COLUMN_WIDTH } from '../stores/kanban-settings-store';
 import { useToast } from '../hooks/use-toast';
 import { WorktreeCleanupDialog } from './WorktreeCleanupDialog';
 import { BulkPRDialog } from './BulkPRDialog';
@@ -82,6 +82,9 @@ interface DroppableColumnProps {
   onSelectAll?: () => void;
   onDeselectAll?: () => void;
   onToggleSelect?: (taskId: string) => void;
+  // Collapse props
+  isCollapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 /**
@@ -131,6 +134,8 @@ function droppableColumnPropsAreEqual(
   if (prevProps.onSelectAll !== nextProps.onSelectAll) return false;
   if (prevProps.onDeselectAll !== nextProps.onDeselectAll) return false;
   if (prevProps.onToggleSelect !== nextProps.onToggleSelect) return false;
+  if (prevProps.isCollapsed !== nextProps.isCollapsed) return false;
+  if (prevProps.onToggleCollapsed !== nextProps.onToggleCollapsed) return false;
 
   // Compare selection props
   const prevSelected = prevProps.selectedTaskIds;
@@ -201,7 +206,7 @@ const getEmptyStateContent = (status: TaskStatus, t: (key: string) => string): {
   }
 };
 
-const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskClick, onStatusChange, isOver, onAddClick, onArchiveAll, onQueueSettings, onQueueAll, maxParallelTasks, archivedCount, showArchived, onToggleArchived, selectedTaskIds, onSelectAll, onDeselectAll, onToggleSelect }: DroppableColumnProps) {
+const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskClick, onStatusChange, isOver, onAddClick, onArchiveAll, onQueueSettings, onQueueAll, maxParallelTasks, archivedCount, showArchived, onToggleArchived, selectedTaskIds, onSelectAll, onDeselectAll, onToggleSelect, isCollapsed, onToggleCollapsed }: DroppableColumnProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const { setNodeRef } = useDroppable({
     id: status
@@ -299,6 +304,57 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
 
   const emptyState = getEmptyStateContent(status, t);
 
+  // Collapsed state: show narrow vertical strip with rotated title and task count
+  if (isCollapsed) {
+    return (
+      <div
+        ref={setNodeRef}
+        className={cn(
+          'flex flex-col rounded-xl border border-white/5 bg-linear-to-b from-secondary/30 to-transparent backdrop-blur-sm transition-all duration-200',
+          getColumnBorderColor(),
+          'border-t-2',
+          isOver && 'drop-zone-highlight'
+        )}
+        style={{ width: COLLAPSED_COLUMN_WIDTH, minWidth: COLLAPSED_COLUMN_WIDTH, maxWidth: COLLAPSED_COLUMN_WIDTH }}
+      >
+        {/* Expand button at top */}
+        <div className="flex justify-center p-2 border-b border-white/5">
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 hover:bg-primary/10 hover:text-primary transition-colors"
+                onClick={onToggleCollapsed}
+                aria-label={t('kanban.expandColumn')}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {t('kanban.expandColumn')}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+
+        {/* Rotated title and task count */}
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <div
+            className="flex items-center gap-2 whitespace-nowrap"
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+          >
+            <span className="column-count-badge">
+              {tasks.length}
+            </span>
+            <h2 className="font-semibold text-sm text-foreground">
+              {t(TASK_STATUS_LABELS[status])}
+            </h2>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={setNodeRef}
@@ -312,6 +368,25 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
       {/* Column header - enhanced styling */}
       <div className="flex items-center justify-between p-4 border-b border-white/5">
         <div className="flex items-center gap-2.5">
+          {/* Collapse button */}
+          {onToggleCollapsed && (
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 hover:bg-muted-foreground/10 hover:text-muted-foreground transition-colors"
+                  onClick={onToggleCollapsed}
+                  aria-label={t('kanban.collapseColumn')}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t('kanban.collapseColumn')}
+              </TooltipContent>
+            </Tooltip>
+          )}
           {/* Select All checkbox for human_review column */}
           {isHumanReview && onSelectAll && onDeselectAll && (
             <Tooltip delayDuration={200}>
@@ -482,6 +557,12 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
 
   // Project store for queue settings
   const projects = useProjectStore((state) => state.projects);
+
+  // Kanban settings store for column preferences (collapse state)
+  const columnPreferences = useKanbanSettingsStore((state) => state.columnPreferences);
+  const loadKanbanPreferences = useKanbanSettingsStore((state) => state.loadPreferences);
+  const saveKanbanPreferences = useKanbanSettingsStore((state) => state.savePreferences);
+  const toggleColumnCollapsed = useKanbanSettingsStore((state) => state.toggleColumnCollapsed);
 
   // Get projectId from first task
   const projectId = tasks[0]?.projectId;
@@ -933,6 +1014,25 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     }
   }, [projectId, loadTaskOrder]);
 
+  // Load kanban column preferences on mount and when project changes
+  useEffect(() => {
+    if (projectId) {
+      loadKanbanPreferences(projectId);
+    }
+  }, [projectId, loadKanbanPreferences]);
+
+  // Create a callback to toggle collapsed state and save to storage
+  const handleToggleColumnCollapsed = useCallback((status: typeof TASK_STATUS_COLUMNS[number]) => {
+    toggleColumnCollapsed(status);
+    // Save preferences after toggling
+    if (projectId) {
+      // Use setTimeout to ensure state is updated before saving
+      setTimeout(() => {
+        saveKanbanPreferences(projectId);
+      }, 0);
+    }
+  }, [toggleColumnCollapsed, saveKanbanPreferences, projectId]);
+
   // Clean up stale task IDs from order when tasks change (e.g., after deletion)
   // This ensures the persisted order doesn't contain IDs for deleted tasks
   useEffect(() => {
@@ -1134,6 +1234,8 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
               onSelectAll={status === 'human_review' ? selectAllTasks : undefined}
               onDeselectAll={status === 'human_review' ? deselectAllTasks : undefined}
               onToggleSelect={status === 'human_review' ? toggleTaskSelection : undefined}
+              isCollapsed={columnPreferences?.[status]?.isCollapsed}
+              onToggleCollapsed={() => handleToggleColumnCollapsed(status)}
             />
           ))}
         </div>
