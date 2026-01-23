@@ -378,6 +378,19 @@ class WorktreeManager:
             return "auto-claude"
         return None
 
+    def _branch_exists(self, branch_name: str) -> bool:
+        """
+        Check if a branch exists in the repository.
+
+        Args:
+            branch_name: The name of the branch to check (e.g., 'auto-claude/my-spec')
+
+        Returns:
+            True if the branch exists, False otherwise.
+        """
+        result = self._run_git(["rev-parse", "--verify", branch_name])
+        return result.returncode == 0
+
     def _get_worktree_stats(self, spec_name: str) -> dict:
         """Get diff statistics for a worktree."""
         worktree_path = self.get_worktree_path(spec_name)
