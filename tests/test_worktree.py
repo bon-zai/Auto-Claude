@@ -113,6 +113,29 @@ class TestWorktreeCreation:
         # The test file should still be there (same worktree)
         assert (info2.path / "test-file.txt").exists()
 
+    def test_create_worktree_idempotent(self, temp_git_repo: Path):
+        """create_worktree succeeds when called twice with same spec name."""
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+
+        # First creation should succeed
+        info1 = manager.create_worktree("test-spec")
+        assert info1.path.exists()
+        assert info1.branch == "auto-claude/test-spec"
+
+        # Create a file in the worktree to verify it's preserved
+        (info1.path / "test-file.txt").write_text("test content")
+
+        # Second creation should also succeed (idempotent)
+        info2 = manager.create_worktree("test-spec")
+
+        # Should return valid worktree info
+        assert info2.path.exists()
+        assert info2.branch == "auto-claude/test-spec"
+        # The test file should still be there (same worktree returned)
+        assert (info2.path / "test-file.txt").exists()
+        assert (info2.path / "test-file.txt").read_text() == "test content"
+
 
 class TestWorktreeRemoval:
     """Tests for removing worktrees."""
