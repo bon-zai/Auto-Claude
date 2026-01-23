@@ -31,7 +31,7 @@ import { TASK_STATUS_COLUMNS, TASK_STATUS_LABELS } from '../../shared/constants'
 import { cn } from '../lib/utils';
 import { persistTaskStatus, forceCompleteTask, archiveTasks, useTaskStore } from '../stores/task-store';
 import { updateProjectSettings, useProjectStore } from '../stores/project-store';
-import { useKanbanSettingsStore, COLLAPSED_COLUMN_WIDTH } from '../stores/kanban-settings-store';
+import { useKanbanSettingsStore, COLLAPSED_COLUMN_WIDTH, DEFAULT_COLUMN_WIDTH, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH } from '../stores/kanban-settings-store';
 import { useToast } from '../hooks/use-toast';
 import { WorktreeCleanupDialog } from './WorktreeCleanupDialog';
 import { BulkPRDialog } from './BulkPRDialog';
@@ -85,6 +85,12 @@ interface DroppableColumnProps {
   // Collapse props
   isCollapsed?: boolean;
   onToggleCollapsed?: () => void;
+  // Resize props
+  columnWidth?: number;
+  isResizing?: boolean;
+  onResizeStart?: (startX: number) => void;
+  onResize?: (width: number) => void;
+  onResizeEnd?: () => void;
 }
 
 /**
@@ -136,6 +142,11 @@ function droppableColumnPropsAreEqual(
   if (prevProps.onToggleSelect !== nextProps.onToggleSelect) return false;
   if (prevProps.isCollapsed !== nextProps.isCollapsed) return false;
   if (prevProps.onToggleCollapsed !== nextProps.onToggleCollapsed) return false;
+  if (prevProps.columnWidth !== nextProps.columnWidth) return false;
+  if (prevProps.isResizing !== nextProps.isResizing) return false;
+  if (prevProps.onResizeStart !== nextProps.onResizeStart) return false;
+  if (prevProps.onResize !== nextProps.onResize) return false;
+  if (prevProps.onResizeEnd !== nextProps.onResizeEnd) return false;
 
   // Compare selection props
   const prevSelected = prevProps.selectedTaskIds;
@@ -206,7 +217,7 @@ const getEmptyStateContent = (status: TaskStatus, t: (key: string) => string): {
   }
 };
 
-const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskClick, onStatusChange, isOver, onAddClick, onArchiveAll, onQueueSettings, onQueueAll, maxParallelTasks, archivedCount, showArchived, onToggleArchived, selectedTaskIds, onSelectAll, onDeselectAll, onToggleSelect, isCollapsed, onToggleCollapsed }: DroppableColumnProps) {
+const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskClick, onStatusChange, isOver, onAddClick, onArchiveAll, onQueueSettings, onQueueAll, maxParallelTasks, archivedCount, showArchived, onToggleArchived, selectedTaskIds, onSelectAll, onDeselectAll, onToggleSelect, isCollapsed, onToggleCollapsed, columnWidth, isResizing, onResizeStart, onResize, onResizeEnd }: DroppableColumnProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const { setNodeRef } = useDroppable({
     id: status
@@ -357,16 +368,21 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
 
   return (
     <div
-      ref={setNodeRef}
-      className={cn(
-        'flex min-w-80 max-w-[30rem] flex-1 flex-col rounded-xl border border-white/5 bg-linear-to-b from-secondary/30 to-transparent backdrop-blur-sm transition-all duration-200',
-        getColumnBorderColor(),
-        'border-t-2',
-        isOver && 'drop-zone-highlight'
-      )}
+      className="relative flex"
+      style={columnWidth ? { width: columnWidth, minWidth: 180, maxWidth: 600, flexShrink: 0 } : undefined}
     >
-      {/* Column header - enhanced styling */}
-      <div className="flex items-center justify-between p-4 border-b border-white/5">
+      <div
+        ref={setNodeRef}
+        className={cn(
+          'flex flex-1 flex-col rounded-xl border border-white/5 bg-linear-to-b from-secondary/30 to-transparent backdrop-blur-sm transition-all duration-200',
+          !columnWidth && 'min-w-80 max-w-[30rem]',
+          getColumnBorderColor(),
+          'border-t-2',
+          isOver && 'drop-zone-highlight'
+        )}
+      >
+        {/* Column header - enhanced styling */}
+        <div className="flex items-center justify-between p-4 border-b border-white/5">
         <div className="flex items-center gap-2.5">
           {/* Collapse button */}
           {onToggleCollapsed && (
@@ -544,6 +560,32 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
           </SortableContext>
         </ScrollArea>
       </div>
+      </div>
+
+      {/* Resize handle on right edge */}
+      {onResizeStart && onResize && onResizeEnd && (
+        <div
+          className={cn(
+            "absolute right-0 top-0 bottom-0 w-1 cursor-col-resize touch-none z-10",
+            "transition-colors duration-150",
+            "hover:bg-primary/40",
+            isResizing && "bg-primary/60"
+          )}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onResizeStart(e.clientX);
+          }}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            if (e.touches.length > 0) {
+              onResizeStart(e.touches[0].clientX);
+            }
+          }}
+        >
+          {/* Wider invisible hit area for easier grabbing */}
+          <div className="absolute inset-y-0 -left-1 -right-1" />
+        </div>
+      )}
     </div>
   );
 }, droppableColumnPropsAreEqual);
@@ -558,11 +600,17 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
   // Project store for queue settings
   const projects = useProjectStore((state) => state.projects);
 
-  // Kanban settings store for column preferences (collapse state)
+  // Kanban settings store for column preferences (collapse state, width)
   const columnPreferences = useKanbanSettingsStore((state) => state.columnPreferences);
   const loadKanbanPreferences = useKanbanSettingsStore((state) => state.loadPreferences);
   const saveKanbanPreferences = useKanbanSettingsStore((state) => state.savePreferences);
   const toggleColumnCollapsed = useKanbanSettingsStore((state) => state.toggleColumnCollapsed);
+  const setColumnWidth = useKanbanSettingsStore((state) => state.setColumnWidth);
+
+  // Column resize state
+  const [resizingColumn, setResizingColumn] = useState<typeof TASK_STATUS_COLUMNS[number] | null>(null);
+  const resizeStartX = useRef<number>(0);
+  const resizeStartWidth = useRef<number>(0);
 
   // Get projectId from first task
   const projectId = tasks[0]?.projectId;
@@ -1033,6 +1081,69 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     }
   }, [toggleColumnCollapsed, saveKanbanPreferences, projectId]);
 
+  // Resize handlers for column width adjustment
+  const handleResizeStart = useCallback((status: typeof TASK_STATUS_COLUMNS[number], startX: number) => {
+    const currentWidth = columnPreferences?.[status]?.width ?? DEFAULT_COLUMN_WIDTH;
+    resizeStartX.current = startX;
+    resizeStartWidth.current = currentWidth;
+    setResizingColumn(status);
+  }, [columnPreferences]);
+
+  const handleResizeMove = useCallback((clientX: number) => {
+    if (!resizingColumn) return;
+
+    const deltaX = clientX - resizeStartX.current;
+    const newWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, resizeStartWidth.current + deltaX));
+    setColumnWidth(resizingColumn, newWidth);
+  }, [resizingColumn, setColumnWidth]);
+
+  const handleResizeEnd = useCallback(() => {
+    if (resizingColumn && projectId) {
+      saveKanbanPreferences(projectId);
+    }
+    setResizingColumn(null);
+  }, [resizingColumn, projectId, saveKanbanPreferences]);
+
+  // Document-level event listeners for resize dragging
+  useEffect(() => {
+    if (!resizingColumn) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      handleResizeMove(e.clientX);
+    };
+
+    const handleMouseUp = () => {
+      handleResizeEnd();
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 0) return;
+      handleResizeMove(e.touches[0].clientX);
+    };
+
+    const handleTouchEnd = () => {
+      handleResizeEnd();
+    };
+
+    // Prevent text selection and set resize cursor during drag
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleTouchEnd);
+
+    return () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [resizingColumn, handleResizeMove, handleResizeEnd]);
+
   // Clean up stale task IDs from order when tasks change (e.g., after deletion)
   // This ensures the persisted order doesn't contain IDs for deleted tasks
   useEffect(() => {
@@ -1236,6 +1347,11 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
               onToggleSelect={status === 'human_review' ? toggleTaskSelection : undefined}
               isCollapsed={columnPreferences?.[status]?.isCollapsed}
               onToggleCollapsed={() => handleToggleColumnCollapsed(status)}
+              columnWidth={columnPreferences?.[status]?.width}
+              isResizing={resizingColumn === status}
+              onResizeStart={(startX) => handleResizeStart(status, startX)}
+              onResize={(width) => setColumnWidth(status, width)}
+              onResizeEnd={handleResizeEnd}
             />
           ))}
         </div>
