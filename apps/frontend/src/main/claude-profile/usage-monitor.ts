@@ -16,7 +16,7 @@ import { ClaudeUsageSnapshot, ProfileUsageSummary, AllProfilesUsage } from '../.
 import { loadProfilesFile } from '../services/profile/profile-manager';
 import type { APIProfile } from '../../shared/types/profile';
 import { detectProvider as sharedDetectProvider, type ApiProvider } from '../../shared/utils/provider-detection';
-import { getCredentialsFromKeychain, clearKeychainCache } from './keychain-utils';
+import { getCredentialsFromKeychain, clearKeychainCache } from './credential-utils';
 import { isProfileRateLimited } from './rate-limit-manager';
 
 // Re-export for backward compatibility

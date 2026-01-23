@@ -10,7 +10,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { IPC_CHANNELS } from '../../shared/constants';
 import { getClaudeProfileManager, initializeClaudeProfileManager } from '../claude-profile-manager';
-import { getCredentialsFromKeychain, clearKeychainCache } from '../claude-profile/keychain-utils';
+import { getCredentialsFromKeychain, clearKeychainCache } from '../claude-profile/credential-utils';
 import { getEmailFromConfigDir } from '../claude-profile/profile-utils';
 import * as OutputParser from './output-parser';
 import * as SessionHandler from './session-handler';

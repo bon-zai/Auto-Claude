@@ -56,8 +56,8 @@ vi.mock('../services/profile/profile-manager', () => ({
   loadProfilesFile: () => mockLoadProfilesFile()
 }));
 
-// Mock keychain-utils to return mock token instead of reading real Keychain
-vi.mock('./keychain-utils', () => ({
+// Mock credential-utils to return mock token instead of reading real credentials
+vi.mock('./credential-utils', () => ({
   getCredentialsFromKeychain: vi.fn(() => ({
     token: 'mock-decrypted-token',
     email: 'test@example.com'

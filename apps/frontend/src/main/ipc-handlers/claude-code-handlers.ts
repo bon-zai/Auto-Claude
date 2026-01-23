@@ -22,7 +22,7 @@ import { readSettingsFile, writeSettingsFile } from '../settings-utils';
 import { isSecurePath } from '../utils/windows-paths';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import { isValidConfigDir } from '../utils/config-path-validator';
-import { clearKeychainCache } from '../claude-profile/keychain-utils';
+import { clearKeychainCache } from '../claude-profile/credential-utils';
 import { getUsageMonitor } from '../claude-profile/usage-monitor';
 import semver from 'semver';
 
